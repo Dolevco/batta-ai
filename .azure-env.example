@@ -1,18 +1,18 @@
 # Azure Configuration
-AZURE_RESOURCE_GROUP=ai-agent-prod
+AZURE_RESOURCE_GROUP=
 AZURE_LOCATION=westeurope
 AZURE_CONTAINER_REGISTRY=        # Populated by setup:azure (e.g. aiagentprodacr)
 AZURE_SUBSCRIPTION_ID=           # Your Azure subscription ID
 
 # App / resource names — populated by setup:azure
-AZURE_API_APP_NAME=              # e.g. ai-agent-prod-api
-AZURE_QDRANT_APP_NAME=           # e.g. ai-agent-prod-qdrant
-AZURE_NEO4J_APP_NAME=            # e.g. ai-agent-prod-neo4j
-AZURE_WORKER_JOB_NAME=           # e.g. ai-agent-prod-worker
+AZURE_API_APP_NAME=              # e.g. batta-api
+AZURE_QDRANT_APP_NAME=           # e.g. batta-qdrant
+AZURE_NEO4J_APP_NAME=            # e.g. batta-neo4j
+AZURE_WORKER_JOB_NAME=           # e.g. batta-worker
 AZURE_STORAGE_ACCOUNT=           # e.g. aiagentprodstor (used for UI static site + file shares)
 
 # Bicep base name (defaults to AZURE_RESOURCE_GROUP if unset)
-BICEP_BASE_NAME=ai-agent-prod
+BICEP_BASE_NAME=batta
 
 # Redis Configuration
 REDIS_URL=

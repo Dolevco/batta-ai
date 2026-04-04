@@ -7,6 +7,7 @@ import type {
   RelationshipType,
   RepositoryBriefing,
 } from '@ai-agent/shared';
+import type { CloudResourceRepository } from '../cloud-resource-repository';
 
 export const VALID_RELATIONSHIP_TYPES: RelationshipType[] = [
   'CONTAINS', 'DEPENDS_ON', 'IMPLEMENTS', 'MODIFIED_BY', 'DEPLOYED_TO',
@@ -32,7 +33,23 @@ export interface ServiceRelationshipsInput {
   services: CodeService[];
   buildArtifacts: BuildArtifact[];
   deploymentArtifacts: DeploymentArtifact[];
-  cloudResources: CloudResource[];
+  /**
+   * In-memory indexed store for cloud resources.
+   * Replaces the flat `cloudResources: CloudResource[]` to enable
+   * scope-aware, bounded queries in Steps 3 and 5.
+   *
+   * Build it with: `new CloudResourceRepository(cloudOutput.resources)`
+   *
+   * For backward compatibility, `cloudResources` is also accepted
+   * (see ServiceRelationshipsExtractor.extract() for the migration shim).
+   */
+  cloudRepository?: CloudResourceRepository;
+  /**
+   * @deprecated Use cloudRepository instead.
+   * Kept for backward compatibility — the extractor wraps this in a
+   * CloudResourceRepository automatically if cloudRepository is not provided.
+   */
+  cloudResources?: CloudResource[];
   /**
    * Optional repository briefing produced before the SRE pipeline.
    * Injected as orientation context into Step 1 (Service Analysis) so each
@@ -47,3 +64,6 @@ export interface ServiceRelationshipsResult {
   updatedDeploymentArtifacts: DeploymentArtifact[];
   updatedBuildArtifacts: BuildArtifact[];
 }
+
+// Re-export for convenience
+export type { CloudResourceRepository };

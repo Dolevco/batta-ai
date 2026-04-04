@@ -839,7 +839,7 @@ export class CodeExtractionStage implements ExtractionStage {
   ): Promise<ExtractedBuildArtifact[]> {
     const artifacts: ExtractedBuildArtifact[] = [];
 
-    // Find Dockerfiles
+    // ── 1. Dockerfiles ────────────────────────────────────────────────────
     const dockerfiles = await glob('**/Dockerfile*', {
       cwd: repoPath,
       ignore: ['**/node_modules/**', '**/dist/**'],
@@ -887,7 +887,232 @@ export class CodeExtractionStage implements ExtractionStage {
       }
     }
 
+    // ── 2. Script-based build artifacts ──────────────────────────────────
+    const scriptArtifacts = await this.extractScriptBuildArtifacts(repoPath, repo, changedPaths);
+    artifacts.push(...scriptArtifacts);
+
     return artifacts;
+  }
+
+  /**
+   * Discover CI pipelines, Makefiles, and build scripts that invoke docker build
+   * or other build commands. These are stored as BuildArtifacts with
+   * buildType='script' and a scriptLanguage metadata field so the
+   * ScriptAnalyzerAgent can handle them in Step 0.5.
+   *
+   * Security: file content is read locally from the cloned repo; no user-controlled
+   * data is passed to the detection regexes.
+   */
+  private async extractScriptBuildArtifacts(
+    repoPath: string,
+    repo: RepositoryHandle,
+    changedPaths?: Set<string>
+  ): Promise<ExtractedBuildArtifact[]> {
+    const artifacts: ExtractedBuildArtifact[] = [];
+
+    /** Build-command indicators for heuristic detection */
+    const BUILD_COMMAND_PATTERNS = [
+      /docker\s+build/i,
+      /docker\s+push/i,
+      /mvn\s+package/i,
+      /mvn\s+install/i,
+      /gradle\s+build/i,
+      /cargo\s+build/i,
+      /npm\s+run\s+build/i,
+      /pnpm\s+(?:run\s+)?build/i,
+      /yarn\s+build/i,
+      /go\s+build/i,
+    ];
+
+    const hasBuildCommands = (content: string): boolean =>
+      BUILD_COMMAND_PATTERNS.some(p => p.test(content));
+
+    // ── 2a. GitHub Actions workflows with build commands ─────────────────
+    const ghWorkflows = await glob('.github/workflows/*.{yml,yaml}', {
+      cwd: repoPath,
+      ignore: [],
+    });
+    for (const file of ghWorkflows) {
+      if (changedPaths && !changedPaths.has(file)) continue;
+      try {
+        const content = fs.readFileSync(path.join(repoPath, file), 'utf-8');
+        if (!hasBuildCommands(content)) continue;
+        const lastCommit = await this.getLastCommitForPath(repoPath, file);
+        artifacts.push({
+          name: path.basename(file, path.extname(file)),
+          buildType: 'script',
+          codePath: file,
+          repository: repo.url,
+          branch: repo.defaultBranch,
+          technology: 'other',
+          serviceId: `${repo.url}/${file}`,
+          lastCommit,
+          sourceLocation: `${repo.url}/${file}`,
+          sourceType: 'build_file',
+          confidence: 0.85,
+          metadata: {
+            scriptLanguage: 'github-actions',
+            detectedBuildCommands: this.extractMatchingLines(content, BUILD_COMMAND_PATTERNS),
+          },
+        });
+      } catch (err) {
+        console.error(`Failed to extract GitHub Actions workflow ${file}:`, err);
+      }
+    }
+
+    // ── 2b. Azure Pipelines ───────────────────────────────────────────────
+    const azurePipelines = await glob('azure-pipelines*.{yml,yaml}', {
+      cwd: repoPath,
+      ignore: [],
+    });
+    for (const file of azurePipelines) {
+      if (changedPaths && !changedPaths.has(file)) continue;
+      try {
+        const content = fs.readFileSync(path.join(repoPath, file), 'utf-8');
+        if (!hasBuildCommands(content)) continue;
+        const lastCommit = await this.getLastCommitForPath(repoPath, file);
+        artifacts.push({
+          name: path.basename(file, path.extname(file)),
+          buildType: 'script',
+          codePath: file,
+          repository: repo.url,
+          branch: repo.defaultBranch,
+          technology: 'other',
+          serviceId: `${repo.url}/${file}`,
+          lastCommit,
+          sourceLocation: `${repo.url}/${file}`,
+          sourceType: 'build_file',
+          confidence: 0.85,
+          metadata: {
+            scriptLanguage: 'azure-pipelines',
+            detectedBuildCommands: this.extractMatchingLines(content, BUILD_COMMAND_PATTERNS),
+          },
+        });
+      } catch (err) {
+        console.error(`Failed to extract Azure Pipeline ${file}:`, err);
+      }
+    }
+
+    // ── 2c. Jenkinsfiles ──────────────────────────────────────────────────
+    const jenkinsfiles = await glob('**/Jenkinsfile', {
+      cwd: repoPath,
+      ignore: ['**/node_modules/**'],
+    });
+    for (const file of jenkinsfiles) {
+      if (changedPaths && !changedPaths.has(file)) continue;
+      try {
+        const content = fs.readFileSync(path.join(repoPath, file), 'utf-8');
+        if (!hasBuildCommands(content)) continue;
+        const lastCommit = await this.getLastCommitForPath(repoPath, file);
+        artifacts.push({
+          name: path.basename(path.dirname(file)) || 'Jenkinsfile',
+          buildType: 'script',
+          codePath: file,
+          repository: repo.url,
+          branch: repo.defaultBranch,
+          technology: 'other',
+          serviceId: `${repo.url}/${file}`,
+          lastCommit,
+          sourceLocation: `${repo.url}/${file}`,
+          sourceType: 'build_file',
+          confidence: 0.8,
+          metadata: {
+            scriptLanguage: 'jenkins',
+            detectedBuildCommands: this.extractMatchingLines(content, BUILD_COMMAND_PATTERNS),
+          },
+        });
+      } catch (err) {
+        console.error(`Failed to extract Jenkinsfile ${file}:`, err);
+      }
+    }
+
+    // ── 2d. Makefiles with docker build targets ───────────────────────────
+    const makefiles = await glob('**/Makefile', {
+      cwd: repoPath,
+      ignore: ['**/node_modules/**'],
+    });
+    for (const file of makefiles) {
+      if (changedPaths && !changedPaths.has(file)) continue;
+      try {
+        const content = fs.readFileSync(path.join(repoPath, file), 'utf-8');
+        if (!hasBuildCommands(content)) continue;
+        const lastCommit = await this.getLastCommitForPath(repoPath, file);
+        artifacts.push({
+          name: `Makefile (${path.dirname(file)})`,
+          buildType: 'script',
+          codePath: file,
+          repository: repo.url,
+          branch: repo.defaultBranch,
+          technology: 'other',
+          serviceId: `${repo.url}/${file}`,
+          lastCommit,
+          sourceLocation: `${repo.url}/${file}`,
+          sourceType: 'build_file',
+          confidence: 0.8,
+          metadata: {
+            scriptLanguage: 'makefile',
+            detectedBuildCommands: this.extractMatchingLines(content, BUILD_COMMAND_PATTERNS),
+          },
+        });
+      } catch (err) {
+        console.error(`Failed to extract Makefile ${file}:`, err);
+      }
+    }
+
+    // ── 2e. build.sh, build-*.sh, *-build.sh, build.ps1 ─────────────────
+    const buildShScripts = await glob('**/{build,build-*,*-build}.{sh,ps1}', {
+      cwd: repoPath,
+      ignore: ['**/node_modules/**', '**/dist/**', '**/.git/**'],
+    });
+    for (const file of buildShScripts) {
+      if (changedPaths && !changedPaths.has(file)) continue;
+      try {
+        const content = fs.readFileSync(path.join(repoPath, file), 'utf-8');
+        if (!hasBuildCommands(content)) continue;
+        const ext = path.extname(file);
+        const scriptLanguage = ext === '.ps1' ? 'powershell' : 'bash';
+        const lastCommit = await this.getLastCommitForPath(repoPath, file);
+        artifacts.push({
+          name: path.basename(file, ext),
+          buildType: 'script',
+          codePath: file,
+          repository: repo.url,
+          branch: repo.defaultBranch,
+          technology: 'other',
+          serviceId: `${repo.url}/${file}`,
+          lastCommit,
+          sourceLocation: `${repo.url}/${file}`,
+          sourceType: 'build_file',
+          confidence: 0.85,
+          metadata: {
+            scriptLanguage,
+            detectedBuildCommands: this.extractMatchingLines(content, BUILD_COMMAND_PATTERNS),
+          },
+        });
+      } catch (err) {
+        console.error(`Failed to extract build script ${file}:`, err);
+      }
+    }
+
+    return artifacts;
+  }
+
+  /**
+   * Extract lines from content that match any of the given patterns.
+   * Returns at most 20 matching lines (trimmed) for metadata storage.
+   * Security: only reads local file content, never user-controlled input.
+   */
+  private extractMatchingLines(content: string, patterns: RegExp[]): string[] {
+    const lines = content.split('\n');
+    const matching: string[] = [];
+    for (const line of lines) {
+      if (matching.length >= 20) break;
+      const trimmed = line.trim();
+      if (trimmed && patterns.some(p => p.test(trimmed))) {
+        matching.push(trimmed.slice(0, 256)); // length cap
+      }
+    }
+    return matching;
   }
 
   /**

@@ -62,6 +62,8 @@ export interface ParsedAssistantTurn {
   text?: string;
   /** Zero or more tool calls parsed from the message */
   toolUses: ToolUse[];
+  /** Set of tool names that are safe to run concurrently (used to identify unsafe tools in a mixed batch) */
+  concurrencySafeToolNames?: ReadonlySet<string>;
 }
 
 export interface ToolConfig {

@@ -10,8 +10,6 @@ import { MODES } from '../context/prompts/modes';
 import { AgentTool, AgentToolName, FORK_BOILERPLATE_TAG } from '../tools/delegation/agentTool';
 import { SubAgentExecutor } from '../tools/delegation/subAgentExecutor';
 import { defaultAgentRegistry } from './agentRegistry';
-import * as fs from 'fs';
-import * as path from 'path';
 
 // Token budget defaults
 const DEFAULT_TOKEN_WARNING_THRESHOLD = 100_000; //160_000;
@@ -149,7 +147,6 @@ export class Task {
       // Check max iterations
       this.iterationCount++;
       if (this.maxIterations && this.iterationCount > this.maxIterations) {
-        this.dumpDebugMessages('max-iterations');
         return {
           success: false,
           completed: true,
@@ -189,14 +186,13 @@ export class Task {
         if (this.aborted) throw new Error('Task aborted');
 
         // execute tools concurrently where safe
-        const toolResults = await this.executeTools(parsedTurn.toolUses);
+        const toolResults = await this.executeTools(parsedTurn.toolUses, parsedTurn.concurrencySafeToolNames);
 
         // Check if any tool completed the task
         for (let i = 0; i < parsedTurn.toolUses.length; i++) {
           const tool = this.toolRegistry.getTool(parsedTurn.toolUses[i].name);
           const result = toolResults[i];
           if (this.isTaskCompleted(result, tool)) {
-            this.dumpDebugMessages('completed');
             return this.getTaskCompletionResult<T>(result, tool);
           }
           if (!!tool?.isInteractionTool) {
@@ -226,17 +222,8 @@ export class Task {
    * Security note: Tool names are validated against the registry before execution.
    * Unknown tools return a safe error result rather than throwing.
    */
-  protected async executeTools(toolUses: ToolUse[]): Promise<ToolResult[]> {
-    const allSafe = toolUses.every(tu => {
-      const tool = this.toolRegistry.getTool(tu.name);
-      return tool?.isConcurrencySafe === true;
-    });
-
-    if (allSafe && toolUses.length > 1) {
-      // Run all in parallel — safe because all tools declared isConcurrencySafe
-      return Promise.all(toolUses.map(tu => this.executeTool(tu)));
-    } else {
-      // Sequential execution for mixed or unsafe tools
+  protected async executeTools(toolUses: ToolUse[], concurrencySafeToolNames?: ReadonlySet<string>): Promise<ToolResult[]> {
+    if (toolUses.length <= 1) {
       const results: ToolResult[] = [];
       for (const tu of toolUses) {
         if (this.aborted) break;
@@ -244,6 +231,31 @@ export class Task {
       }
       return results;
     }
+
+    // Determine safe set: prefer the parsed turn's set, fall back to registry
+    const safeNames = concurrencySafeToolNames ?? new Set(
+      this.toolRegistry.getTools()
+        .filter((t: Tool) => t.isConcurrencySafe === true)
+        .map((t: Tool) => t.name)
+    );
+
+    const safeUses = toolUses.filter(tu => safeNames.has(tu.name));
+    const unsafeUses = toolUses.filter(tu => !safeNames.has(tu.name));
+
+    // Run safe tools in parallel; return synthetic failures for unsafe ones
+    const safeResults = await Promise.all(safeUses.map(tu => this.executeTool(tu)));
+    const unsafeResults: ToolResult[] = unsafeUses.map(tu => ({
+      success: false,
+      message: `Tool '${tu.name}' is not concurrency-safe and cannot run in a parallel batch`,
+      error: `Tool '${tu.name}' is not concurrency-safe and cannot run in a parallel batch`
+    }));
+
+    // Reconstruct results in original order
+    const safeIter = safeResults[Symbol.iterator]();
+    const unsafeIter = unsafeResults[Symbol.iterator]();
+    return toolUses.map(tu =>
+      safeNames.has(tu.name) ? safeIter.next().value! : unsafeIter.next().value!
+    );
   }
 
   /**
@@ -519,28 +531,6 @@ export class Task {
   private estimateTokens(messages: Message[]): number {
     const charsPerToken = 4;
     return messages.reduce((sum, m) => sum + Math.ceil(m.content.length / charsPerToken), 0);
-  }
-
-  /**
-   * Write the full conversation history to a timestamped file under debug/tasks/
-   * for post-mortem inspection. The folder is git-ignored.
-   */
-  private dumpDebugMessages(reason: string): void {
-    try {
-      const debugDir = path.resolve(process.cwd(), 'debug', 'tasks');
-      fs.mkdirSync(debugDir, { recursive: true });
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filePath = path.join(debugDir, `task-${timestamp}-${reason}.json`);
-      const dump = {
-        reason,
-        timestamp: new Date().toISOString(),
-        iterationCount: this.iterationCount,
-        messages: [this.systemMessage, ...this.conversationHistory],
-      };
-      fs.writeFileSync(filePath, JSON.stringify(dump, null, 2), 'utf-8');
-    } catch {
-      // Never fail the task due to debug I/O errors
-    }
   }
 
   /**

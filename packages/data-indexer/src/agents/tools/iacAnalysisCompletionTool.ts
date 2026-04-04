@@ -57,6 +57,11 @@ export interface IaCAnalysisInput extends Record<string, unknown> {
   usedResources: IaCResourceRef[];
   namingConventions: string[];
   summary: string;
+  deploymentTargets?: {
+    resourceGroups?: string[];
+    subscriptionIds?: string[];
+    regions?: string[];
+  };
 }
 
 // ─── Tool ─────────────────────────────────────────────────────────────────────
@@ -111,6 +116,16 @@ export class IaCAnalysisCompletionTool extends BaseTool<IaCAnalysisInput> {
       required: true,
       type: 'string',
     },
+    {
+      name: 'deploymentTargets',
+      description:
+        'Explicit deployment target scope extracted from the file. ' +
+        '{ resourceGroups?: string[], subscriptionIds?: string[], regions?: string[] }. ' +
+        'Extract from: Terraform resource_group_name, Bicep targetScope/RG param, ARM resourceGroup() expressions, ' +
+        'Helm namespace, or az CLI --resource-group arguments. Omit if none found.',
+      required: false,
+      type: 'object',
+    },
   ];
 
   async execute(input: IaCAnalysisInput): Promise<ToolResult> {
@@ -138,6 +153,7 @@ export class IaCAnalysisCompletionTool extends BaseTool<IaCAnalysisInput> {
           usedResources: input.usedResources,
           namingConventions: input.namingConventions,
           summary: input.summary,
+          ...(input.deploymentTargets ? { deploymentTargets: input.deploymentTargets } : {}),
         },
       };
     });
@@ -194,6 +210,31 @@ export class IaCAnalysisCompletionTool extends BaseTool<IaCAnalysisInput> {
       errors.push('`summary` is required.');
     } else if (input.summary.length > MAX_STRING_LENGTH * 4) {
       errors.push(`\`summary\` exceeds max length (${MAX_STRING_LENGTH * 4}).`);
+    }
+
+    // deploymentTargets (optional) — validate structure when present
+    if (input.deploymentTargets !== undefined) {
+      const dt = input.deploymentTargets as any;
+      if (typeof dt !== 'object' || dt === null) {
+        errors.push('`deploymentTargets` must be an object when provided.');
+      } else {
+        for (const field of ['resourceGroups', 'subscriptionIds', 'regions'] as const) {
+          const val = dt[field];
+          if (val !== undefined) {
+            if (!Array.isArray(val)) {
+              errors.push(`deploymentTargets.${field} must be an array.`);
+            } else {
+              val.forEach((v: unknown, i: number) => {
+                if (typeof v !== 'string' || !v.trim()) {
+                  errors.push(`deploymentTargets.${field}[${i}] must be a non-empty string.`);
+                } else if (v.length > MAX_STRING_LENGTH) {
+                  errors.push(`deploymentTargets.${field}[${i}] exceeds max length.`);
+                }
+              });
+            }
+          }
+        }
+      }
     }
 
     return errors;

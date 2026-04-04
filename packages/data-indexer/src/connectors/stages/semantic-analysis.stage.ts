@@ -1,7 +1,15 @@
 /**
  * Stage 4: Semantic Analysis
- * 
- * Generates LLM descriptions and embeddings (cached)
+ *
+ * Generates LLM descriptions and semantic documents for build artifacts and
+ * deployment artifacts.
+ *
+ * NOTE: code_service entities are intentionally SKIPPED here.
+ * The 3-pass ServiceAnalyzer (Stage 4.5 / ServiceRelationshipsExtractor) now
+ * produces a richer skeleton-derived serviceDescription and sets
+ * service.responsibility directly. The pipeline generates service semantic docs
+ * AFTER Stage 4.5 completes (see CodeIndexingPipeline.run).
+ * This eliminates the duplicate 15-iteration LLM call per service.
  */
 
 import { MODES, PlannedTaskCompletionTool, Task, createReadOnlyFileTools } from '@ai-agent/core';
@@ -24,9 +32,11 @@ import { EntityIdUtils, InputHashGenerator } from '../../utils/id-generator';
 
 /**
  * Code Semantic Analysis Stage
- * 
- * Generates LLM-based responsibility descriptions for services, build artifacts, and deployment artifacts.
- * Uses the Task API to analyze code and generate concise 1-2 line descriptions.
+ *
+ * Generates LLM-based responsibility descriptions for build artifacts and
+ * deployment artifacts.  code_service entities are excluded — their
+ * responsibility is derived from the skeleton output of the 3-pass
+ * ServiceAnalyzer and does not require a separate LLM call here.
  */
 export class CodeSemanticAnalysisStage implements SemanticAnalysisStage {
   private tenantId: TenantId;
@@ -54,52 +64,17 @@ export class CodeSemanticAnalysisStage implements SemanticAnalysisStage {
     let cacheMisses = 0;
 
     let processedCount = 0;
-    const totalCount = artifacts.filter(e => 
-      e.entityType === 'code_service' || 
-      e.entityType === 'build_artifact' || 
+    const totalCount = artifacts.filter(e =>
+      e.entityType === 'build_artifact' ||
       e.entityType === 'deployment_artifact'
     ).length;
 
     for (const entity of artifacts) {
-      // Generate responsibility for services, build artifacts, and deployment artifacts
+      // code_service: responsibility is now seeded from skeleton output in Stage 4.5.
+      // Generating a separate LLM description here would be a redundant 15-iteration call
+      // that gets overwritten anyway. Skip code_service entities entirely.
       if (entity.entityType === 'code_service') {
-        const service = entity as CodeService;
-        processedCount++;
-        console.log(`      🧠 [${processedCount}/${totalCount}] Analyzing service: ${service.name}`);
-        const responsibility = await this.generateResponsibility(
-          service.name,
-          service.codePath,
-          service.language,
-          service.serviceType,
-          'code_service',
-          service.techStack
-        );
-        
-        // Update the entity with responsibility
-        service.responsibility = responsibility;
-        
-        const inputHash = this.hashGenerator.generateInputHash(
-          service.name,
-          service.codePath,
-          service.language,
-          { serviceType: service.serviceType }
-        );
-
-        const doc: SemanticDocument = {
-          id: this.idUtils.semanticDocumentId(inputHash),
-          tenantId,
-          artifactId: service.id,
-          inputHash,
-          language: service.language,
-          filePath: service.codePath,
-          responsibility,
-          llmModel: process.env.AZURE_OPENAI_DEPLOYMENT!,
-          generatedAt: new Date().toISOString(),
-          metadata: {},
-        };
-
-        documents.push(doc);
-        cacheMisses++;
+        continue;
       } else if (entity.entityType === 'build_artifact') {
         const buildArtifact = entity as BuildArtifact;
         processedCount++;
@@ -180,6 +155,40 @@ export class CodeSemanticAnalysisStage implements SemanticAnalysisStage {
     }
 
     return { documents, cacheHits, cacheMisses, errors };
+  }
+
+  /**
+   * Generate a SemanticDocument for a code_service entity whose responsibility
+   * has already been populated by the 3-pass ServiceAnalyzer.
+   *
+   * Called by the pipeline AFTER Stage 4.5 (SRE) so the richer skeleton-derived
+   * responsibility is used instead of a separate LLM call.
+   *
+   * Security: only the sanitized `service.responsibility` string is forwarded;
+   *   no raw file content or secret values are included.
+   */
+  buildServiceSemanticDoc(tenantId: TenantId, service: CodeService): SemanticDocument {
+    const responsibility = service.responsibility || `${service.serviceType} for ${service.name}`;
+
+    const inputHash = this.hashGenerator.generateInputHash(
+      service.name,
+      service.codePath,
+      service.language,
+      { serviceType: service.serviceType },
+    );
+
+    return {
+      id: this.idUtils.semanticDocumentId(inputHash),
+      tenantId,
+      artifactId: service.id,
+      inputHash,
+      language: service.language,
+      filePath: service.codePath,
+      responsibility,
+      llmModel: process.env.AZURE_OPENAI_DEPLOYMENT!,
+      generatedAt: new Date().toISOString(),
+      metadata: {},
+    };
   }
 
   private async generateResponsibility(

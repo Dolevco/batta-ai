@@ -58,6 +58,11 @@ export type ActorType =
   | 'admin'
   | 'system'
   | 'third_party';
+
+/**
+ * Process types for the SERVICE-LEVEL DFD.
+ * These represent independently deployable units — never internal modules.
+ */
 export type ProcessType =
   | 'api_gateway'
   | 'backend_service'
@@ -65,6 +70,47 @@ export type ProcessType =
   | 'queue'
   | 'scheduler'
   | 'other';
+
+/**
+ * Process types for the FEATURE-LEVEL DFD.
+ *
+ * Per DFD.MD: internal processing stages must be modelled at responsibility level,
+ * not at function/implementation level. Each value maps to a distinct responsibility:
+ *
+ *   entry_point       – the API endpoint, event trigger, or queue consumer that starts the flow.
+ *   input_validation  – schema validation, type coercion, sanitisation of incoming data.
+ *   authorization     – permission check, policy evaluation, scope/role validation.
+ *   business_logic    – the core domain rule applied to the request.
+ *   data_access       – reading from or writing to a persistent store (abstracted).
+ *   external_call     – an outbound call to an external service or API.
+ *   response_builder  – assembles and returns the output (success or error shape).
+ *   event_publisher   – publishes a domain event to a queue or stream.
+ *   other             – any processing stage that does not fit the above.
+ */
+export type FeatureProcessType =
+  | 'entry_point'
+  | 'input_validation'
+  | 'authorization'
+  | 'business_logic'
+  | 'data_access'
+  | 'external_call'
+  | 'response_builder'
+  | 'event_publisher'
+  | 'other';
+
+/** All valid feature-level process type values, used for allow-list validation. */
+export const VALID_FEATURE_PROCESS_TYPES: readonly FeatureProcessType[] = [
+  'entry_point',
+  'input_validation',
+  'authorization',
+  'business_logic',
+  'data_access',
+  'external_call',
+  'response_builder',
+  'event_publisher',
+  'other',
+] as const;
+
 export type DataStoreNodeType =
   | 'database'
   | 'cache'
@@ -92,7 +138,12 @@ export interface DFDActor {
 export interface DFDProcess {
   id: string;
   label: string;
-  type: ProcessType;
+  /**
+   * For service-level DFDs: use ProcessType (deployable service granularity).
+   * For feature-level DFDs: use FeatureProcessType (responsibility-level stages).
+   * Both union types are accepted here so a single DataFlowDiagram interface serves both DFD kinds.
+   */
+  type: ProcessType | FeatureProcessType;
   /** Trust boundary zone this process lives in */
   trustBoundary?: TrustBoundaryType;
   correlationTags: CorrelationTag[];
@@ -119,6 +170,15 @@ export interface DFDFlow {
   from: string;
   /** ID of the target DFD node */
   to: string;
+  /**
+   * Human-readable label for this flow.
+   *
+   * Service-level DFDs: concise summary of all data on the edge
+   *   (e.g. "auth tokens, user profiles, audit events").
+   * Feature-level DFDs: a transformation description that explains what changes
+   *   about the data as it moves between stages
+   *   (e.g. "enriched with user profile", "filtered by permissions", "validated and normalised").
+   */
   label: string;
   /** Human-readable data type names flowing on this edge */
   dataTypes: string[];
@@ -129,6 +189,48 @@ export interface DFDFlow {
   authenticationRequired: boolean;
   /** True when this flow crosses a trust boundary */
   crossesTrustBoundary: boolean;
+
+  // ── Feature-level DFD fields ─────────────────────────────────────────────
+
+  /**
+   * Whether this flow is asynchronous (hands off to a queue / event broker and
+   * does NOT wait for a response) or synchronous (awaits a response before
+   * continuing). Omitted for service-level DFDs where this is less relevant.
+   *
+   * DFD.MD: "distinguish if a step hands off to a queue vs waits for a response"
+   */
+  async?: boolean;
+
+  /**
+   * Which execution path this flow belongs to.
+   *   happy_path – the normal, successful flow.
+   *   error_path – an exception, validation failure, or downstream error branch.
+   *   both       – the same flow carries both outcomes (e.g. a response that may be
+   *                success or error depending on upstream result).
+   *
+   * Omit for service-level DFDs where conditional branching is not modelled.
+   *
+   * DFD.MD: "Conditional branches — happy path vs error path"
+   */
+  branch?: 'happy_path' | 'error_path' | 'both';
+
+  // ── Service-level DFD fields ─────────────────────────────────────────────
+
+  /**
+   * For event-driven flows to/from a queue or message broker: the topic, queue,
+   * or stream name (e.g. "task-events", "payment.completed", "audit-log").
+   *
+   * DFD.MD: "Events published / consumed — with topic/queue name"
+   */
+  topicName?: string;
+
+  /**
+   * For data store flows: whether the service reads from, writes to, or does both
+   * on this data store. Provides the read-vs-write-vs-both distinction required
+   * by DFD.MD: "Reads/writes to data stores — distinguished (read vs write vs both)".
+   * Omit for non-data-store flows.
+   */
+  accessPattern?: 'read' | 'write' | 'read_write';
 }
 
 export interface DataFlowDiagram {

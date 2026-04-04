@@ -2,21 +2,37 @@ import type { ILLMApiHandler } from '@ai-agent/core';
 import type { DeploymentArtifact, IaCAnalysis } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { IaCAnalysisInput } from '../../../agents/tools/iacAnalysisCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry, createIaCAnalyzerAgentWithRepository } from '../../../agents';
+import type { CloudResourceRepository } from '../../cloud-resource-repository';
 
 export class IaCAnalyzer {
   constructor(
     private readonly api: ILLMApiHandler,
     private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    /** Optional cloud repository — when provided, query tools are wired into the agent */
+    private readonly cloudRepository?: CloudResourceRepository,
   ) {}
 
   async analyzeIaCFile(
     artifact: DeploymentArtifact,
     repositoryPath: string,
   ): Promise<IaCAnalysis> {
-    const task = this.registry.createTask(DataIndexerAgentType.IacAnalyzer, this.api, {
-      workspace: repositoryPath,
-    });
+    // Use repository-aware definition when a cloud repository is available
+    // so the agent can call list_resource_groups / query_cloud_resources during analysis.
+    let task;
+    if (this.cloudRepository) {
+      const def = createIaCAnalyzerAgentWithRepository(this.cloudRepository);
+      // Register temporarily on a local registry to create a task from the factory def
+      const localRegistry = new DataIndexerAgentRegistry();
+      localRegistry.register(def);
+      task = localRegistry.createTask(DataIndexerAgentType.IacAnalyzer, this.api, {
+        workspace: repositoryPath,
+      });
+    } else {
+      task = this.registry.createTask(DataIndexerAgentType.IacAnalyzer, this.api, {
+        workspace: repositoryPath,
+      });
+    }
 
     const result = await task.execute<IaCAnalysisInput>(
       `Analyse the IaC file "${artifact.name}" located at "${artifact.codePath}".\n` +

@@ -237,6 +237,25 @@ export class AzureResourceGraphConnector {
       ? resource.id
       : `unknown-${resource.name}-${resource.type}`;
 
+    // ── Parse subscriptionId from ARM resource ID ─────────────────────────
+    // Format: /subscriptions/{subId}/resourceGroups/{rg}/providers/…
+    // Security: this is internal system data from Azure ARM, not user input.
+    let subscriptionId: string | undefined;
+    const subMatch = armId.match(/\/subscriptions\/([0-9a-f-]{36})/i);
+    if (subMatch) {
+      subscriptionId = subMatch[1].toLowerCase();
+    }
+
+    // ── Normalise resource group to lower-case for case-insensitive matching ─
+    const resourceGroup = resource.resourceGroup
+      ? resource.resourceGroup.toLowerCase()
+      : undefined;
+
+    // ── Extract environment + app tags ────────────────────────────────────
+    const tags = resource.tags ?? {};
+    const environment = tags['environment'] ?? tags['env'] ?? undefined;
+    const appTag = tags['app'] ?? tags['application'] ?? undefined;
+
     return {
       // Use a deterministic hash-based ID (not the raw ARM path) so that entity IDs
       // are safe to embed in UI URLs without breaking routing or encoding.
@@ -249,6 +268,10 @@ export class AzureResourceGraphConnector {
       // Preserve the original ARM resource path for reference / cross-linking
       resourceId: armId,
       region: resource.location,
+      subscriptionId,
+      resourceGroup,
+      environment,
+      appTag,
       threatModel,
       createdAt: now,
       updatedAt: now,

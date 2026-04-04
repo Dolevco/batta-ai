@@ -41,11 +41,19 @@ import { QdrantAdapter, Neo4jAdapter } from '@ai-agent/shared';
 import type {
   BusinessFeature,
   DataFlowDiagram,
+  DFDActor,
+  DFDDataStore,
+  DFDFlow,
+  TrustBoundaryType,
   FeatureThreatModel,
   CorrelationTag,
   ServiceDfd,
   ServiceThreatModel,
   FeatureChangeLogEntry,
+  ServiceExternalSurface,
+  ServiceSkeleton,
+  ServiceFileMap,
+  ExternalDep,
 } from '@ai-agent/shared';
 
 /**
@@ -68,8 +76,6 @@ import type { ThreatModelInput } from '../agents/tools/featureThreatModelComplet
 import type { ServiceDFDInput } from '../agents/tools/serviceDFDCompletionTool';
 import type { ServiceThreatModelInput } from '../agents/tools/serviceThreatModelCompletionTool';
 import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../agents';
-
-// ─── BusinessFeatureExtractor ─────────────────────────────────────────────────
 
 export class BusinessFeatureExtractor {
   private readonly registry: DataIndexerAgentRegistry;
@@ -96,6 +102,10 @@ export class BusinessFeatureExtractor {
    * After Step 5 the unified ServiceThreatModel is projected back onto
    * service.threatModel (ThreatModelData shape) so that the ExploitabilityAnalyzer
    * finds the threat list in the field it expects.
+   *
+   * Pre-computed pass context (fileMap, skeleton, surface) is extracted from the
+   * service entity if it was populated by the 3-pass ServiceAnalyzer, and injected
+   * into feature list and DFD prompts to avoid re-discovery.
    */
   async extractFeaturesForService(
     tenantId: TenantId,
@@ -107,12 +117,22 @@ export class BusinessFeatureExtractor {
   ): Promise<BusinessFeature[]> {
     const servicePath = service.metadata?.codePath as string || service.codePath || '';
 
+    // Extract pre-computed 3-pass context from the service entity (populated by ServiceAnalyzer)
+    const fileMap: ServiceFileMap | undefined = service.serviceFileMap;
+    const skeleton: ServiceSkeleton | undefined = service.serviceSkeleton;
+    const surface: ServiceExternalSurface | undefined = service.serviceExternalSurface;
+
+    const hasPrecomputedContext = !!(fileMap && skeleton && surface);
+
     console.log(
-      `[BusinessFeatureExtractor] Extracting features for "${service.name}" (${servicePath})`
+      `[BusinessFeatureExtractor] Extracting features for "${service.name}" (${servicePath})` +
+      (hasPrecomputedContext ? ' [with pre-computed surface context]' : ' [no pre-computed context]')
     );
 
     // ── Step 1: Feature List ────────────────────────────────────────────────
-    const featureList = await this.runFeatureListTask(service, servicePath, repositoryPath, repositoryBriefing);
+    const featureList = await this.runFeatureListTask(
+      service, servicePath, repositoryPath, repositoryBriefing, fileMap, skeleton, surface,
+    );
     if (!featureList.length) {
       console.warn(`[BusinessFeatureExtractor] No features extracted for "${service.name}"`);
       return [];
@@ -122,7 +142,9 @@ export class BusinessFeatureExtractor {
     const features = await Promise.all(
       featureList.map(async (draft) => {
         try {
-          const dfd = await this.runDFDTask(draft, service, servicePath, repositoryPath, repositoryBriefing);
+          const dfd = await this.runDFDTask(
+            draft, service, servicePath, repositoryPath, repositoryBriefing, fileMap, skeleton, surface,
+          );
           const threatModel = await this.runThreatModelTask(draft, dfd, repositoryPath, repositoryBriefing);
           return this.buildFeature(tenantId, service, draft, dfd, threatModel, repositoryName);
         } catch (err) {
@@ -151,7 +173,7 @@ export class BusinessFeatureExtractor {
     // threat model, replacing the separate cloud-only ThreatModelAnalyzer pass.
     if (validFeatures.length > 0) {
       try {
-        const serviceDfd = await this.runServiceDFDTask(service, validFeatures, repositoryPath);
+        const serviceDfd = await this.runServiceDFDTask(service, validFeatures, repositoryPath, surface);
         const serviceThreatModel = await this.runServiceThreatModelTask(
           service, serviceDfd, repositoryPath, cloudContext,
         );
@@ -181,6 +203,9 @@ export class BusinessFeatureExtractor {
     servicePath: string,
     repositoryPath: string,
     repositoryBriefing?: RepositoryBriefing,
+    fileMap?: ServiceFileMap,
+    skeleton?: ServiceSkeleton,
+    surface?: ServiceExternalSurface,
   ): Promise<FeatureDraft[]> {
     const task = this.registry.createTask(DataIndexerAgentType.FeatureListExtractor, this.api, {
       workspace: repositoryPath,
@@ -190,17 +215,21 @@ export class BusinessFeatureExtractor {
       ? buildBriefingSection(repositoryBriefing)
       : '';
 
+    // Build pre-computed context section from skeleton + surface (Passes 1–2)
+    const precomputedSection = buildPrecomputedContextSection(skeleton, surface, fileMap);
+
+    // If we have pre-computed context, use constrained route-file-only reading.
+    // Otherwise fall back to the original 6-phase exploration.
+    const explorationInstructions = (skeleton && surface && fileMap)
+      ? buildConstrainedFeatureListInstructions(servicePath, fileMap, skeleton, surface)
+      : buildLegacyFeatureListInstructions(servicePath);
+
     const result = await task.execute<{ features: FeatureDraft[] }>(
       (briefingSection ? `${briefingSection}\n\n` : '') +
-        `Analyse the service "${service.name}" located at "${servicePath}". ` +
-        `Complete ALL 6 exploration phases described in your instructions before calling complete_feature_list:\n` +
-        `  Phase 1 — Use the repository briefing above to plan your exploration.\n` +
-        `  Phase 2 — Read package.json and the service entry point (index.ts / main.ts / app.ts).\n` +
-        `  Phase 3 — List and read all route/controller/handler files under "${servicePath}".\n` +
-        `  Phase 4 — Read domain model and business-logic files (models/, services/, domain/).\n` +
-        `  Phase 5 — Check .env.example and scan imports for external SDKs.\n` +
-        `  Phase 6 — Read README.md for the stated feature list and business purpose.\n\n` +
-        `Only call complete_feature_list after completing all phases.`
+        (precomputedSection ? `${precomputedSection}\n\n` : '') +
+        `Analyse the service "${service.name}" located at "${servicePath}".\n\n` +
+        explorationInstructions + `\n\n` +
+        `Only call complete_feature_list when done.`
     );
 
     if (!result.requiredOutput) {
@@ -220,6 +249,9 @@ export class BusinessFeatureExtractor {
     servicePath: string,
     repositoryPath: string,
     repositoryBriefing?: RepositoryBriefing,
+    fileMap?: ServiceFileMap,
+    skeleton?: ServiceSkeleton,
+    surface?: ServiceExternalSurface,
   ): Promise<DataFlowDiagram> {
     const featureContext = JSON.stringify(
       { name: draft.name, description: draft.description, technicalSummary: draft.technicalSummary,
@@ -236,16 +268,27 @@ export class BusinessFeatureExtractor {
       workspace: repositoryPath,
     });
 
+    // Build pre-computed surface context for this DFD agent
+    const surfaceSection = surface
+      ? buildSurfaceSectionForDFD(surface)
+      : '';
+
+    const skeletonSection = skeleton
+      ? buildSkeletonSectionForDFD(skeleton)
+      : '';
+
+    // Build the reading list for this feature's specific files
+    const featureFilesInstruction = (surface && fileMap)
+      ? buildFeatureSpecificReadingInstruction(draft, fileMap)
+      : buildLegacyDFDExplorationInstructions();
+
     const result = await task.execute<DataFlowInput>(
       (briefingSection ? `${briefingSection}\n\n` : '') +
+        (skeletonSection ? `${skeletonSection}\n\n` : '') +
+        (surfaceSection ? `${surfaceSection}\n\n` : '') +
         `Produce a Level-2 Data Flow Diagram for the business feature below:\n\n${featureContext}\n\n` +
         `The feature belongs to service "${service.name}" located at "${servicePath}".\n\n` +
-        `Complete ALL 5 exploration steps in your instructions BEFORE drawing any flows:\n` +
-        `  E1 — Locate the feature entry point using the correlationTags and technicalSummary above.\n` +
-        `  E2 — Trace the full request/response path across files.\n` +
-        `  E3 — Identify all data stores the feature touches (read the repository/service files).\n` +
-        `  E4 — Identify authentication mechanisms and trust boundaries from actual middleware.\n` +
-        `  E5 — Read .env.example to confirm external endpoints this feature calls.\n\n` +
+        featureFilesInstruction + `\n\n` +
         `Only call complete_data_flow_diagram after completing all exploration steps.`
     );
 
@@ -309,12 +352,23 @@ export class BusinessFeatureExtractor {
    * can make informed merging decisions.  The ServiceDFDCompletionTool enforces
    * strict allow-list validation before the result is accepted.
    *
+   * Pass 2 surface context (if available) is injected as a validation checklist:
+   * the synthesis agent must verify that every external dep in the surface map
+   * appears as a node in the merged DFD.
+   *
+   * After the LLM produces its output, a deterministic enforcement pass scans
+   * every ExternalDep in the surface and injects any missing nodes + flows.
+   * This guarantees completeness regardless of LLM omissions.
+   *
    * Security: the feature context JSON is sanitized before being sent to the LLM.
+   *           File tools are NOT provided — this is a pure synthesis step.
+   *           Injected node IDs are derived from dep names only (no secrets).
    */
   private async runServiceDFDTask(
     service: CodeService,
     features: BusinessFeature[],
-    repositoryPath: string
+    repositoryPath: string,
+    surface?: ServiceExternalSurface,
   ): Promise<ServiceDfd> {
     // Build sanitized per-feature DFD summaries for the LLM context.
     const featureSummaries = features.map(f => ({
@@ -333,17 +387,24 @@ export class BusinessFeatureExtractor {
       2
     );
 
+    // Service DFD Synthesis is a pure merge — NO file tools provided.
     const task = this.registry.createTask(DataIndexerAgentType.ServiceDfdSynthesis, this.api);
+
+    // Build the surface checklist (Pass 2 output) to inject as a validation anchor.
+    const surfaceChecklist = surface
+      ? buildSurfaceChecklist(surface)
+      : '';
 
     const externalDepsCount = service.externalDeps?.length ?? 0;
     const result = await task.execute<ServiceDFDInput>(
       `Produce a Service-Level Architectural DFD for "${service.name}" from the ${features.length} feature DFDs below.\n` +
         `The service also has ${externalDepsCount} known external dependencies (see "externalDeps" in the context) that MUST all appear in the DFD.\n\n` +
         `${context}\n\n` +
+        (surfaceChecklist ? surfaceChecklist + `\n\n` : '') +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `WHAT THIS DFD MUST SHOW\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `This is an ARCHITECTURAL GRAPH, not a feature-level diagram.\n` +
+        `This is an ARCHITECTURAL GRAPH answering "how does this service fit into the world?"\n` +
         `Goal: a security reviewer should instantly see every EXTERNAL relationship\n` +
         `the service has — who calls it, what it calls, and what data crosses each boundary.\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -369,12 +430,24 @@ export class BusinessFeatureExtractor {
         `  ✅ Logging/observability sinks that receive structured writes: Elastic, Splunk.\n` +
         `  ❌ NO separate nodes for individual tables, collections, or topics.\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `FLOW RULES\n` +
+        `FLOW RULES  (per DFD.MD — four required edge types)\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `  ✅ EXACTLY ONE flow per (from, to) pair — duplicates are rejected.\n` +
         `  ✅ Merge ALL data between the same two nodes into ONE flow.\n` +
         `     flow.label = concise summary, e.g. "JWT validation, token refresh, user profile"\n` +
-        `     flow.dataTypes[] = every distinct data type on that edge.\n` +
+        `     flow.dataTypes[] = every distinct data type on that edge.\n\n` +
+        `  1. REQUEST/RESPONSE CALLS — set flow.protocol to actual protocol (HTTPS, gRPC, etc.)\n` +
+        `  2. EVENTS PUBLISHED/CONSUMED — set flow.topicName to exact topic/queue name.\n` +
+        `     Required for every flow to/from a queue dataStore.\n` +
+        `     DFD.MD: "Events published / consumed — with topic/queue name"\n` +
+        `  3. DATA STORE READS/WRITES — set flow.accessPattern:\n` +
+        `       "read"       → service only reads from this store\n` +
+        `       "write"      → service only writes to this store\n` +
+        `       "read_write" → service does both\n` +
+        `     Required for every flow to/from a dataStore.\n` +
+        `     DFD.MD: "Reads/writes to data stores — distinguished (read vs write vs both)"\n` +
+        `  4. AUTH FLOWS — model each IdP call as a distinct flow with authenticationRequired=true.\n` +
+        `     DFD.MD: "Auth flows — who authenticates whom"\n\n` +
         `  ✅ Include EVERY external communication from ALL feature DFDs:\n` +
         `     inbound requests, DB reads/writes, cache ops, queue publish/subscribe,\n` +
         `     IdP token validation, outbound HTTP to 3rd parties, log writes, webhooks.\n` +
@@ -399,9 +472,33 @@ export class BusinessFeatureExtractor {
 
     const output = result.requiredOutput as unknown as ServiceDFDInput;
     const sanitized = sanitizeMetadata(output.dataFlowDiagram as unknown as Record<string, unknown>);
+    const llmDfd = sanitized as unknown as DataFlowDiagram;
+
+    // ── Deterministic enforcement pass ──────────────────────────────────────
+    // Regardless of what the LLM produced, inject any ExternalDep from the
+    // surface (or service.externalDeps) that is not already represented as a
+    // node in the DFD.  This guarantees completeness and makes the security
+    // review accurate even when the LLM omits low-salience deps.
+    const allDeps = [
+      ...(surface?.externalDeps ?? []),
+      ...((service.externalDeps ?? []).filter(d =>
+        !(surface?.externalDeps ?? []).some(s => s.name.toLowerCase() === d.name.toLowerCase())
+      )),
+    ];
+    const enforcedDfd = enforceSurfaceCoverage(llmDfd, service.name, allDeps);
+
+    const injectedCount =
+      (enforcedDfd.actors.length - llmDfd.actors.length) +
+      (enforcedDfd.dataStores.length - llmDfd.dataStores.length);
+    if (injectedCount > 0) {
+      console.log(
+        `[BusinessFeatureExtractor] 🔒 Surface enforcement: injected ${injectedCount} missing ` +
+        `node(s) into service DFD for "${service.name}"`
+      );
+    }
 
     return {
-      dataFlowDiagram: sanitized as unknown as DataFlowDiagram,
+      dataFlowDiagram: enforcedDfd,
       featuresCovered: output.featuresCovered,
       reasoning: output.reasoning,
       generatedAt: new Date().toISOString(),
@@ -927,4 +1024,567 @@ function buildCloudContextSection(service: CodeService, ctx: CloudContext): stri
   }
 
   return lines.join('\n');
+}
+
+// ── Pre-computed context helpers (3-pass pipeline) ────────────────────────────
+
+/**
+ * Builds a combined orientation block from the skeleton and surface produced by
+ * the 3-pass ServiceAnalyzer. Injected at the top of FeatureList and DFD prompts
+ * so those agents start with full structural context rather than discovering it.
+ *
+ * Security: skeleton and surface are already sanitized by their respective
+ *   extractors — no secret values or raw file content is forwarded here.
+ */
+function buildPrecomputedContextSection(
+  skeleton?: ServiceSkeleton,
+  surface?: ServiceExternalSurface,
+  fileMap?: ServiceFileMap,
+): string {
+  if (!skeleton && !surface && !fileMap) return '';
+
+  const lines: string[] = [
+    '════════════════════════════════════════════════════════════════',
+    'PRE-COMPUTED SERVICE CONTEXT  (from 3-pass analysis — do not re-derive)',
+    '════════════════════════════════════════════════════════════════',
+  ];
+
+  if (skeleton) {
+    lines.push(`Service description : ${skeleton.serviceDescription}`);
+    lines.push(`Business value      : ${skeleton.businessValue}`);
+    lines.push(`Tech stack          : ${skeleton.techStack.join(', ')}`);
+    lines.push(`Entry point types   : ${skeleton.entryPointTypes.join(', ')}`);
+    lines.push(`Arch patterns       : ${skeleton.architecturalPatterns.join(', ') || 'none'}`);
+    if (skeleton.dataModels.length > 0) {
+      lines.push(`Data models         : ${skeleton.dataModels.join(', ')}`);
+    }
+    if (skeleton.exposedEndpoints.length > 0) {
+      lines.push(`Exposed endpoints   :`);
+      skeleton.exposedEndpoints.slice(0, 20).forEach(ep =>
+        lines.push(`  ${ep.method ?? '?'} ${ep.path}  [${ep.file}]`)
+      );
+      if (skeleton.exposedEndpoints.length > 20) {
+        lines.push(`  …and ${skeleton.exposedEndpoints.length - 20} more`);
+      }
+    }
+    if (skeleton.internalDependencies.length > 0) {
+      lines.push(`Internal deps       : ${skeleton.internalDependencies.join(', ')}`);
+    }
+  }
+
+  if (surface) {
+    if (surface.externalDeps.length > 0) {
+      lines.push('');
+      lines.push('External surface (trust boundaries + deps):');
+      surface.externalDeps.forEach(dep => {
+        const boundary = findDepBoundary(dep.name, surface.trustBoundaryMap);
+        lines.push(
+          `  [${dep.type.toUpperCase()}] ${dep.name}` +
+          (boundary ? ` — boundary: ${boundary}` : '') +
+          (dep.dataFlow ? ` — flow: ${dep.dataFlow}` : '') +
+          (dep.purpose ? ` — ${dep.purpose}` : ''),
+        );
+      });
+    }
+    const boundaryEntries = Object.entries(surface.trustBoundaryMap).filter(([, names]) => names.length > 0);
+    if (boundaryEntries.length > 0) {
+      lines.push('Trust boundary map  :');
+      boundaryEntries.forEach(([zone, names]) => lines.push(`  ${zone}: ${names.join(', ')}`));
+    }
+  }
+
+  if (fileMap) {
+    const pf = fileMap.priorityFiles;
+    const routeCount = pf.routes.length;
+    const clientCount = pf.clients.length;
+    lines.push('');
+    lines.push(
+      `File map summary    : ${fileMap.estimatedSignalFiles} signal files, ` +
+      `${fileMap.totalFiles} total, ` +
+      `${routeCount} route file(s), ` +
+      `${clientCount} client file(s)`,
+    );
+  }
+
+  lines.push('════════════════════════════════════════════════════════════════');
+  return lines.join('\n');
+}
+
+/** Return the trust boundary zone that contains this dep name, or undefined. */
+function findDepBoundary(
+  depName: string,
+  map: ServiceExternalSurface['trustBoundaryMap'],
+): string | undefined {
+  const lower = depName.toLowerCase();
+  for (const [zone, names] of Object.entries(map)) {
+    if (names.some(n => n.toLowerCase() === lower)) return zone;
+  }
+  return undefined;
+}
+
+/**
+ * Feature list exploration instructions for the constrained path (3-pass context available).
+ *
+ * The agent already has the skeleton and surface; it only needs to read the
+ * route/controller files to identify features. Config, models, and env files
+ * are already captured in the pre-computed context.
+ *
+ * Security: only file paths from the sanitized fileMap are forwarded.
+ */
+function buildConstrainedFeatureListInstructions(
+  servicePath: string,
+  fileMap: ServiceFileMap,
+  skeleton: ServiceSkeleton,
+  surface: ServiceExternalSurface,
+): string {
+  const { routes, entry } = fileMap.priorityFiles;
+  const readList = [...routes, ...entry].slice(0, 20);
+
+  const lines: string[] = [
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'FEATURE EXTRACTION INSTRUCTIONS (constrained reading mode)',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'The external surface and data layer are pre-computed above.',
+    'You do NOT need to re-read config, env, model, or client files.',
+    '',
+    'Read ONLY the following route/controller/handler files to identify business features:',
+  ];
+
+  if (readList.length > 0) {
+    readList.forEach(f => lines.push(`  - ${f}`));
+  } else {
+    lines.push(`  - (no route files found — read ${servicePath}/src/index.ts or equivalent entry point)`);
+  }
+
+  lines.push('');
+  lines.push('For each identified feature:');
+  lines.push('  1. Name it from the user/business perspective (not technical).');
+  lines.push('  2. Write correlationTags with the file paths that implement this feature.');
+  lines.push('  3. Use the endpoints from the skeleton above to populate technicalSummary.');
+  lines.push(`  4. External deps (databases, identity providers, APIs) are in the context above.`);
+  lines.push('');
+  lines.push(`Tech stack: ${skeleton.techStack.slice(0, 5).join(', ')}`);
+  lines.push(`Known external deps: ${surface.externalDeps.map(d => d.name).slice(0, 5).join(', ') || 'none'}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Feature list exploration instructions for the legacy path (no pre-computed context).
+ * Mimics the original open-ended 6-phase exploration prompt.
+ */
+function buildLegacyFeatureListInstructions(servicePath: string): string {
+  return (
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `FEATURE EXTRACTION INSTRUCTIONS (legacy exploration mode)\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `Perform a structured 6-phase exploration of "${servicePath}":\n\n` +
+    `Phase 1 — File tree: list the directory structure to understand layout.\n` +
+    `Phase 2 — Entry point: read the main entry file (index.ts, main.ts, app.ts).\n` +
+    `Phase 3 — Routes/handlers: read each route/controller/handler file found.\n` +
+    `Phase 4 — Data models: read key model and schema files.\n` +
+    `Phase 5 — Config: read package.json and .env.example to infer external deps.\n` +
+    `Phase 6 — Synthesise: identify 1–5 business features from what you read.\n\n` +
+    `For each feature, populate correlationTags with the files that implement it.\n` +
+    `Identify all external dependencies (databases, identity providers, APIs) from config/client files.`
+  );
+}
+
+// ── DFD context helpers ───────────────────────────────────────────────────────
+
+/**
+ * Build a DFD-oriented surface context block.
+ * Instructs the DFD agent to use the pre-mapped external deps as nodes
+ * rather than discovering them from scratch.
+ *
+ * Security: surface is already sanitized — only dep names, types, and
+ *   boundary classification are forwarded (no secret values).
+ */
+function buildSurfaceSectionForDFD(surface: ServiceExternalSurface): string {
+  if (surface.externalDeps.length === 0 &&
+      Object.values(surface.trustBoundaryMap).every(a => a.length === 0)) {
+    return '';
+  }
+
+  const lines: string[] = [
+    '════════════════════════════════════════════════════════════════',
+    'EXTERNAL SURFACE  (pre-mapped — use these as DFD nodes)',
+    '════════════════════════════════════════════════════════════════',
+    'The following external dependencies have already been systematically',
+    'extracted. Use them directly as actors/dataStores in the DFD.',
+    'Do NOT re-discover external deps from config or package.json.',
+    '',
+  ];
+
+  // Group by trust boundary zone
+  const byZone: Record<string, Array<{ name: string; type: string; dataFlow: string }>> = {};
+  for (const dep of surface.externalDeps) {
+    const zone = findDepBoundary(dep.name, surface.trustBoundaryMap) ?? 'EXTERNAL';
+    if (!byZone[zone]) byZone[zone] = [];
+    byZone[zone].push({ name: dep.name, type: dep.type, dataFlow: dep.dataFlow });
+  }
+
+  const zoneOrder = ['IDENTITY', 'DATA', 'SERVICE', 'EXTERNAL', 'INTERNET'] as const;
+  for (const zone of zoneOrder) {
+    const deps = byZone[zone];
+    if (!deps || deps.length === 0) continue;
+    lines.push(`${zone} boundary:`);
+    deps.forEach(d => {
+      const nodeType = ['database', 'cache', 'storage', 'queue'].includes(d.type)
+        ? 'dataStore'
+        : 'actor';
+      lines.push(`  [${nodeType}] ${d.name}  (type: ${d.type}, flow: ${d.dataFlow})`);
+    });
+    lines.push('');
+  }
+
+  // Remaining deps not in any zone
+  const allZonedNames = new Set(
+    Object.values(surface.trustBoundaryMap).flat().map(n => n.toLowerCase()),
+  );
+  const unzoned = surface.externalDeps.filter(d => !allZonedNames.has(d.name.toLowerCase()));
+  if (unzoned.length > 0) {
+    lines.push('Other:');
+    unzoned.forEach(d => lines.push(`  ${d.name}  (type: ${d.type}, flow: ${d.dataFlow})`));
+    lines.push('');
+  }
+
+  lines.push('════════════════════════════════════════════════════════════════');
+  return lines.join('\n');
+}
+
+/**
+ * Build a DFD-oriented skeleton context block.
+ * Provides the data models and endpoints so the DFD agent has structural
+ * anchors without needing to re-read entry or model files.
+ *
+ * Security: skeleton is already sanitized — only structural metadata.
+ */
+function buildSkeletonSectionForDFD(skeleton: ServiceSkeleton): string {
+  const lines: string[] = [
+    '════════════════════════════════════════════════════════════════',
+    'SERVICE SKELETON  (pre-computed — use these as DFD anchors)',
+    '════════════════════════════════════════════════════════════════',
+    `Description : ${skeleton.serviceDescription}`,
+    `Tech stack  : ${skeleton.techStack.join(', ')}`,
+    `Entry types : ${skeleton.entryPointTypes.join(', ')}`,
+  ];
+
+  if (skeleton.dataModels.length > 0) {
+    lines.push(`Data models : ${skeleton.dataModels.join(', ')}`);
+  }
+
+  if (skeleton.exposedEndpoints.length > 0) {
+    lines.push('Exposed endpoints:');
+    skeleton.exposedEndpoints.slice(0, 15).forEach(ep =>
+      lines.push(`  ${ep.method ?? '?'} ${ep.path}  [${ep.file}]`)
+    );
+    if (skeleton.exposedEndpoints.length > 15) {
+      lines.push(`  …and ${skeleton.exposedEndpoints.length - 15} more`);
+    }
+  }
+
+  if (skeleton.internalDependencies.length > 0) {
+    lines.push(`Internal deps (sibling services): ${skeleton.internalDependencies.join(', ')}`);
+  }
+
+  lines.push('════════════════════════════════════════════════════════════════');
+  return lines.join('\n');
+}
+
+/**
+ * Build a per-feature reading instruction using the feature's correlationTags
+ * to select only the files that implement this specific feature, cross-referenced
+ * with the file map.
+ *
+ * Falls back to the route files from the file map if no tags match.
+ *
+ * Security: only sanitized file paths from the fileMap are forwarded.
+ */
+function buildFeatureSpecificReadingInstruction(
+  draft: FeatureDraft,
+  fileMap: ServiceFileMap,
+): string {
+  // Collect file paths hinted by correlationTags (keywords may contain file path fragments)
+  const tagKeywords: string[] = draft.correlationTags.flatMap(t => t.keywords ?? []);
+
+  const allPriorityFiles = [
+    ...fileMap.priorityFiles.routes,
+    ...fileMap.priorityFiles.entry,
+    ...fileMap.priorityFiles.models,
+  ];
+
+  // Match files whose path includes any of the tag keywords (case-insensitive)
+  const featureFiles = allPriorityFiles.filter(f => {
+    const lower = f.toLowerCase();
+    return tagKeywords.some(kw => lower.includes(kw.toLowerCase()));
+  });
+
+  // If no matches, fall back to route + entry files (bounded to 10)
+  const readList =
+    featureFiles.length > 0
+      ? featureFiles.slice(0, 10)
+      : allPriorityFiles.slice(0, 10);
+
+  const lines: string[] = [
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    `DFD READING INSTRUCTIONS  (constrained to this feature)`,
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'The service skeleton and external surface are pre-provided above.',
+    'You do NOT need to re-read config, env, or client files.',
+    'Use the provided external deps as the data stores and actors in your DFD.',
+    '',
+    `Read ONLY the following files to trace the "${draft.name}" feature flow:`,
+  ];
+
+  readList.forEach(f => lines.push(`  - ${f}`));
+
+  lines.push('');
+  lines.push('After reading, produce the Level-2 DFD for this feature:');
+  lines.push('  - Map the exact data flows between this service and external systems.');
+  lines.push('  - For auth/identity flows, cite the specific middleware or validator function.');
+  lines.push('  - For DB flows, cite the specific model/repository function.');
+  lines.push('  - Assign trust boundaries from the surface context above — do not invent new ones.');
+
+  return lines.join('\n');
+}
+
+/**
+ * DFD exploration instructions for the legacy path (no file map / no surface context).
+ */
+function buildLegacyDFDExplorationInstructions(): string {
+  return (
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `DFD EXPLORATION INSTRUCTIONS (legacy mode)\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `To produce the DFD for this feature:\n\n` +
+    `1. Read the route/controller file that implements this feature.\n` +
+    `2. Follow imports to identify the data layer (DB, cache, queue).\n` +
+    `3. Read config/env files to identify identity providers and third-party APIs.\n` +
+    `4. Read any middleware for auth/validation on this route.\n` +
+    `5. Classify all external interactions by trust boundary.\n\n` +
+    `Identify all data stores (databases, caches, queues) and external actors\n` +
+    `(identity providers, third-party APIs, upstream services) that this feature touches.`
+  );
+}
+
+/**
+ * Build a surface validation checklist for the ServiceDFD synthesis step.
+ *
+ * The synthesis agent uses this to verify that every dep from the surface map
+ * is represented as a node in the merged DFD, catching omissions before the
+ * ServiceThreatModel step.
+ *
+ * Security: only dep names and boundary zones are forwarded — no secret values.
+ */
+function buildSurfaceChecklist(surface: ServiceExternalSurface): string {
+  if (surface.externalDeps.length === 0) return '';
+
+  const lines: string[] = [
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'SURFACE VALIDATION CHECKLIST',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'The following external dependencies were detected in Pass 2.',
+    'EVERY entry below MUST appear as an actor or dataStore node in the DFD.',
+    'If any are missing from the merged DFD, add them now.',
+    '',
+  ];
+
+  surface.externalDeps.forEach(dep => {
+    const zone = findDepBoundary(dep.name, surface.trustBoundaryMap) ?? 'EXTERNAL';
+    const nodeType = ['database', 'cache', 'storage', 'queue'].includes(dep.type)
+      ? 'dataStore'
+      : 'actor';
+    lines.push(`  ☐  ${dep.name}  →  ${nodeType}  [boundary: ${zone}]`);
+  });
+
+  lines.push('');
+  lines.push('Do not call complete_service_dfd until all boxes above are checked.');
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  return lines.join('\n');
+}
+
+// ── Surface enforcement (deterministic post-LLM pass) ──────────────────────────
+
+/**
+ * Map an ExternalDep type onto the correct DFD node category.
+ *
+ * Storage-type deps (database, cache, storage, queue) become `dataStores`.
+ * All other deps (api, cloud, identity, other) become `actors`.
+ *
+ * Security: only dep type enum values flow through here — no secrets.
+ */
+function depToNodeCategory(dep: ExternalDep): 'dataStore' | 'actor' {
+  return ['database', 'cache', 'storage', 'queue'].includes(dep.type) ? 'dataStore' : 'actor';
+}
+
+/** Derive a stable, URL-safe node ID from a dep name. */
+function depToNodeId(depName: string): string {
+  return 'enforced-' + depName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/** Derive the correct trust boundary type from an ExternalDep. */
+function depToTrustBoundary(dep: ExternalDep): TrustBoundaryType {
+  if (dep.type === 'identity') return 'IDENTITY';
+  if (['database', 'cache', 'storage', 'queue'].includes(dep.type)) return 'DATA';
+  return 'EXTERNAL';
+}
+
+/**
+ * Check whether a dep name is already represented in the DFD.
+ *
+ * A dep is considered covered if ANY actor or dataStore label contains the dep
+ * name as a case-insensitive substring (or vice-versa).  This handles naming
+ * variations like "Azure OpenAI" vs "Azure OpenAI API".
+ *
+ * Security: only normalised label strings are compared — no external calls.
+ */
+function isDepCoveredByDfd(depName: string, dfd: Pick<DataFlowDiagram, 'actors' | 'dataStores'>): boolean {
+  const needle = depName.toLowerCase();
+  const allLabels = [
+    ...dfd.actors.map(a => a.label.toLowerCase()),
+    ...dfd.dataStores.map(d => d.label.toLowerCase()),
+  ];
+  return allLabels.some(label => label.includes(needle) || needle.includes(label));
+}
+
+/**
+ * Deterministic enforcement pass: inject any ExternalDep that the LLM omitted
+ * from the service-level DFD.
+ *
+ * For every dep in `allDeps`:
+ *   1. Skip if already covered (name substring match on actor/dataStore labels).
+ *   2. Create an appropriate actor or dataStore node.
+ *   3. Create a single flow from/to the service's own process node.
+ *   4. Ensure the corresponding TrustBoundaryType is in `trustBoundaries[]`.
+ *
+ * The function is pure and returns a new DataFlowDiagram object (no mutation).
+ *
+ * Security:
+ *   - IDs are derived from dep names only — no workspace paths or secret values.
+ *   - `encryptionAtRest` defaults to `false` (unknown — conservative assumption).
+ *   - `authenticationRequired` defaults to `true` for all external connections.
+ *   - `encrypted` defaults to `true` when protocol hints at HTTPS/TLS, else `false`.
+ *   - `crossesTrustBoundary` is always `true` for injected nodes (they are external).
+ *   - No existing LLM-produced nodes or flows are modified or removed.
+ */
+export function enforceSurfaceCoverage(
+  dfd: DataFlowDiagram,
+  serviceName: string,
+  allDeps: ExternalDep[],
+): DataFlowDiagram {
+  if (!allDeps.length) return dfd;
+
+  // Find the primary process node for this service (used as flow endpoint).
+  // Prefer an exact name match; fall back to the first process node.
+  const serviceProcessNode =
+    dfd.processes.find(p => p.label.toLowerCase() === serviceName.toLowerCase()) ??
+    dfd.processes[0];
+
+  if (!serviceProcessNode) {
+    // No process node to connect to — return unchanged to avoid orphan flows.
+    return dfd;
+  }
+
+  const newActors: DFDActor[] = [...dfd.actors];
+  const newDataStores: DFDDataStore[] = [...dfd.dataStores];
+  const newFlows: DFDFlow[] = [...dfd.flows];
+  const newBoundaries: Set<TrustBoundaryType> = new Set(dfd.trustBoundaries);
+  let flowCounter = dfd.flows.length;
+
+  // Track (from, to) pairs already present to avoid duplicate flows.
+  const existingFlowPairs = new Set<string>(
+    dfd.flows.map(f => `${f.from}→${f.to}`)
+  );
+
+  for (const dep of allDeps) {
+    // Re-check coverage against the growing set of nodes built so far.
+    if (isDepCoveredByDfd(dep.name, { actors: newActors, dataStores: newDataStores })) {
+      continue;
+    }
+
+    const nodeId = depToNodeId(dep.name);
+    const boundary = depToTrustBoundary(dep);
+    newBoundaries.add(boundary);
+
+    if (depToNodeCategory(dep) === 'dataStore') {
+      // Map ExternalDep type → DFDDataStore type
+      const storeType: DFDDataStore['type'] =
+        dep.type === 'database' ? 'database' :
+        dep.type === 'cache'    ? 'cache' :
+        dep.type === 'storage'  ? 'blob_storage' :
+        dep.type === 'queue'    ? 'queue' :
+        'other';
+
+      newDataStores.push({
+        id: nodeId,
+        label: dep.name,
+        type: storeType,
+        dataClassification: dep.dataClassification,
+        encryptionAtRest: false, // conservative unknown default
+        trustBoundary: boundary,
+        correlationTags: [{
+          entityType: 'data_store',
+          keywords: [dep.name.toLowerCase().replace(/\s+/g, '_')],
+        }],
+      });
+    } else {
+      newActors.push({
+        id: nodeId,
+        label: dep.name,
+        type: 'third_party',
+        trusted: false,
+        trustBoundary: boundary,
+        correlationTags: [{
+          entityType: dep.type === 'identity' ? 'identity' : 'external_dependency',
+          keywords: [dep.name.toLowerCase().replace(/\s+/g, '_')],
+        }],
+      });
+    }
+
+    // Add a flow connecting the service process to the injected node.
+    // Direction is derived from the dep's dataFlow field.
+    const isHttps =
+      (dep.protocol ?? '').toUpperCase().includes('HTTPS') ||
+      (dep.protocol ?? '').toUpperCase().includes('TLS');
+
+    const direction: DFDFlow['direction'] =
+      dep.dataFlow === 'inbound'  ? 'inbound' :
+      dep.dataFlow === 'outbound' ? 'outbound' :
+      'bidirectional';
+
+    // For inbound deps the external entity sends data to the service; for all
+    // others (outbound / bidirectional) the service initiates the connection.
+    const [flowFrom, flowTo] =
+      direction === 'inbound'
+        ? [nodeId, serviceProcessNode.id]
+        : [serviceProcessNode.id, nodeId];
+
+    const pairKey = `${flowFrom}→${flowTo}`;
+    if (!existingFlowPairs.has(pairKey)) {
+      existingFlowPairs.add(pairKey);
+      flowCounter += 1;
+      newFlows.push({
+        id: `enforced-flow-${flowCounter}`,
+        from: flowFrom,
+        to: flowTo,
+        label: dep.purpose || `${dep.dataFlow} communication with ${dep.name}`,
+        dataTypes: ['data'],
+        dataClassification: dep.dataClassification,
+        direction,
+        protocol: dep.protocol ?? 'HTTPS',
+        encrypted: isHttps,
+        authenticationRequired: true,
+        crossesTrustBoundary: true,
+      });
+    }
+  }
+
+  return {
+    actors: newActors,
+    processes: dfd.processes,
+    dataStores: newDataStores,
+    flows: newFlows,
+    trustBoundaries: Array.from(newBoundaries) as TrustBoundaryType[],
+  };
 }

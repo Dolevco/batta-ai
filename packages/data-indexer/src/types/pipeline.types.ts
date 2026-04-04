@@ -144,7 +144,7 @@ export interface ExtractedModule {
 
 export interface ExtractedBuildArtifact {
   name: string;
-  buildType: 'docker' | 'npm' | 'maven' | 'gradle' | 'other';
+  buildType: 'docker' | 'npm' | 'maven' | 'gradle' | 'script' | 'other';
   codePath: string;
   repository: string;
   branch: string;

@@ -1,3 +1,18 @@
+/**
+ * Step 3 (renumbered from Step 4) – IaC → Cloud Resource (DEPLOYS / USES)
+ *
+ * Uses IaCAnalysis + scope resolution to correlate deployment artifacts to
+ * cloud resource entities.
+ *
+ * Core change vs old implementation:
+ *   - Accepts CloudResourceRepository + DeploymentScope map instead of flat array
+ *   - Each artifact only sees the 5–30 resources in its resolved scope
+ *   - As a side effect, builds the ServiceResourceGroupAffinity map used by Step 5
+ *
+ * Security:
+ *   - allEntities passed to CorrelationTask is bounded (scoped candidates only)
+ *   - Relationship metadata is sanitized by makeRelationship() before storage
+ */
 import { CorrelationTask } from '@ai-agent/core';
 import type { CorrelationConfig } from '@ai-agent/core';
 import type { ILLMApiHandler } from '@ai-agent/core';
@@ -11,11 +26,19 @@ import type {
 import { VALID_RELATIONSHIP_TYPES } from '../types';
 import { makeRelationship, buildCloudResourceHints } from '../helpers/utils';
 import { PersistenceHelper } from '../helpers/persistence';
+import type { CloudResourceRepository } from '../../cloud-resource-repository';
+import type { DeploymentScope } from '../helpers/scope-resolver';
+import { resolveResourceCandidates } from '../helpers/scope-resolver';
+
+/** artifactId → Set of resource group names confirmed by Step 3 DEPLOYS relationships */
+export type ArtifactResourceGroupAffinity = Map<string, Set<string>>;
+/** serviceId → Set of resource group names (derived after Step 5 provides artifact→service mapping) */
+export type ServiceResourceGroupAffinity = Map<string, Set<string>>;
 
 /**
- * Step 4 – IaC → Cloud Resource (DEPLOYS / USES)
+ * Step 3 – IaC → Cloud Resource (DEPLOYS / USES) — scoped
  *
- * Uses IaCAnalysis to correlate deployment artifacts to cloud resource entities.
+ * @returns relationships and the artifact-level affinity map (orchestrator converts to service-level)
  */
 export async function correlateIaCToCloudResources(
   api: ILLMApiHandler,
@@ -23,18 +46,43 @@ export async function correlateIaCToCloudResources(
   tenantId: TenantId,
   repositoryPath: string,
   deploymentArtifacts: DeploymentArtifact[],
-  cloudResources: CloudResource[],
-): Promise<Relationship[]> {
+  cloudRepository: CloudResourceRepository,
+  deploymentScopes?: Map<string, DeploymentScope>,
+): Promise<{ relationships: Relationship[]; affinityByArtifact: ArtifactResourceGroupAffinity }> {
   const allRelationships: Relationship[] = [];
+  const affinityByArtifact: ArtifactResourceGroupAffinity = new Map();
 
   for (const artifact of deploymentArtifacts) {
     console.log(`   [SRE]   🔍 IaC→Cloud: ${artifact.name}`);
     const analysis = artifact.iacAnalysis;
 
+    // ── Scope-aware candidate selection ────────────────────────────────────
+    const scope = deploymentScopes?.get(artifact.id);
+    let candidates: CloudResource[];
+
+    if (scope && scope.resourceGroups.length > 0) {
+      candidates = resolveResourceCandidates([scope], cloudRepository, 50);
+      console.log(
+        `   [SRE]     📍 Scoped to RG(s): ${scope.resourceGroups.join(', ')} ` +
+        `(${candidates.length} candidate(s), method: ${scope.resolutionMethod})`,
+      );
+    } else {
+      // Fallback: query up to 50 resources unscoped
+      candidates = cloudRepository.query({}, 50);
+      console.log(
+        `   [SRE]     ⚠️  No scope for ${artifact.name} — using ${candidates.length} unscoped candidate(s) (of ${cloudRepository.totalCount} total)`,
+      );
+    }
+
+    if (candidates.length === 0) {
+      console.log(`   [SRE]     ℹ️  ${artifact.name}: no candidate cloud resources — skipping`);
+      continue;
+    }
+
     const config: CorrelationConfig<DeploymentArtifact | CloudResource> = {
       mainEntity: artifact,
       mainEntityType: 'Deployment Artifact (IaC)',
-      allEntities: [...deploymentArtifacts, ...cloudResources],
+      allEntities: [...deploymentArtifacts, ...candidates],
       repositoryPath,
       validRelationshipTypes: VALID_RELATIONSHIP_TYPES,
       getEntityId: (e) => e.id,
@@ -74,6 +122,9 @@ export async function correlateIaCToCloudResources(
             lines.push('', 'NAMING CONVENTIONS:');
             analysis.namingConventions.forEach(nc => lines.push(`  - ${nc}`));
           }
+          if (analysis.deploymentTargets?.resourceGroups?.length) {
+            lines.push('', `DEPLOYMENT TARGET RG(s): ${analysis.deploymentTargets.resourceGroups.join(', ')}`);
+          }
         }
 
         return lines.join('\n');
@@ -82,9 +133,10 @@ export async function correlateIaCToCloudResources(
         const resources = entities.filter((e) => 'cloudProvider' in e) as CloudResource[];
         if (!resources.length) return 'No cloud resources available.';
         return [
-          'AVAILABLE CLOUD RESOURCES (match by name, type, or naming pattern):',
+          `AVAILABLE CLOUD RESOURCES (${resources.length} in scope — match by name, type, or naming pattern):`,
           ...resources.map((r) =>
             `  - ID: ${r.id}\n    Name: ${r.name}\n    Type: ${r.resourceType} (${r.cloudProvider})` +
+            (r.resourceGroup ? `\n    ResourceGroup: ${r.resourceGroup}` : '') +
             (r.responsibility ? `\n    Responsibility: ${r.responsibility}` : ''),
           ),
         ].join('\n');
@@ -95,7 +147,7 @@ export async function correlateIaCToCloudResources(
           ? buildCloudResourceHints(
               analysis.deployedResources,
               analysis.usedResources,
-              cloudResources,
+              candidates,
             )
           : '';
 
@@ -127,8 +179,8 @@ RULES:
         'Match IaC-analysed resources to cloud resource entities using Step 0 findings.',
     };
 
-    const task = new CorrelationTask(api, config);
-    const result = await task.execute();
+    const correlationTask = new CorrelationTask(api, config);
+    const result = await correlationTask.execute();
 
     if (result.relationships.length > 0) {
       console.log(`   [SRE]     ✅ ${artifact.name}: ${result.relationships.length} relationship(s)`);
@@ -141,11 +193,25 @@ RULES:
         }),
       );
       allRelationships.push(...rels);
+
+      // ── Build affinity map: collect RGs of DEPLOYS targets ───────────────
+      for (const rel of result.relationships) {
+        if (rel.type === 'DEPLOYS') {
+          const targetResource = candidates.find(c => c.id === rel.targetId);
+          if (targetResource?.resourceGroup) {
+            if (!affinityByArtifact.has(artifact.id)) {
+              affinityByArtifact.set(artifact.id, new Set());
+            }
+            affinityByArtifact.get(artifact.id)!.add(targetResource.resourceGroup);
+          }
+        }
+      }
+
       await persistence.persistRelationships(rels);
     } else {
       console.log(`   [SRE]     ℹ️  ${artifact.name}: no cloud resource relationships found`);
     }
   }
 
-  return allRelationships;
+  return { relationships: allRelationships, affinityByArtifact };
 }

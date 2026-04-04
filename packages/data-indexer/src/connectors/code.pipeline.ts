@@ -157,7 +157,11 @@ export class CodeIndexingPipeline implements IndexingPipeline {
         errors: [],
       };
       
-      console.log(`[${runId}] Stage 4: Semantic Analysis`);
+      // Stage 4: Semantic Analysis (build + deployment artifacts only)
+      // NOTE: code_service entities are skipped here; their responsibility is
+      // derived from the skeleton output of the 3-pass ServiceAnalyzer in Stage 4.5
+      // and a dedicated semantic doc is generated below after SRE completes.
+      console.log(`[${runId}] Stage 4: Semantic Analysis (build/deployment artifacts)`);
       semantic = await this.semanticStage.analyze(
         tenantId,
         transformation.entities,
@@ -202,6 +206,23 @@ export class CodeIndexingPipeline implements IndexingPipeline {
 
           transformation.relationships.push(...sreResult.relationships);
           console.log(`[${runId}] Analysis + Correlation complete: ${sreResult.relationships.length} relationships discovered`);
+
+          // Stage 4.5.1: Generate service semantic docs from skeleton-derived responsibility.
+          // This replaces the old CodeSemanticAnalysisStage service pass (15-iter LLM call per service).
+          // The skeleton produced by the 3-pass ServiceAnalyzer has already set service.responsibility
+          // on each enriched service entity; we convert that to SemanticDocument objects here.
+          const enrichedServices = sreResult.updatedServices.filter(
+            s => s.entityType === 'code_service' && s.responsibility
+          ) as CodeService[];
+          if (enrichedServices.length > 0) {
+            const serviceDocs = enrichedServices.map(s =>
+              this.semanticStage.buildServiceSemanticDoc(tenantId, s)
+            );
+            semantic.documents.push(...serviceDocs);
+            console.log(
+              `[${runId}] Generated ${serviceDocs.length} skeleton-derived service semantic doc(s)`
+            );
+          }
 
           // Calculate repository-level responsibility from enriched child responsibilities
           console.log(`[${runId}] Stage 4.6: Repository Responsibility`);

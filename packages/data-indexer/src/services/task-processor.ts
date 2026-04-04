@@ -38,6 +38,7 @@ import { RepositoryBriefingService } from './repository-briefing';
 import { CheckpointManager } from './checkpoint-manager';
 import { IntegrationFetcher } from './integration-fetcher';
 import { RepositorySetup } from './repository-setup';
+import { CloudResourceRepository } from './cloud-resource-repository';
 import type { CodeIndexerConfig } from '../connectors/stages/discovery.stage';
 import type { CodeService, DeploymentArtifact, BuildArtifact, RepositoryBriefing } from '@ai-agent/shared';
 
@@ -487,18 +488,27 @@ export class RepositoryTaskProcessor {
     // Include cloud resources from DB that aren't in the current in-memory list
     // (e.g. discovered in a prior run's cloud discovery stage).
     const inMemoryCloudIds = new Set(entities.filter(e => e.entityType === 'cloud_resource').map(e => e.id));
-    const cloudResources = [
+    const cloudResourcesList = [
       ...entities.filter(e => e.entityType === 'cloud_resource').map(e => mergeWithDb(e, dbEntityMap)),
       ...[...dbEntityMap.values()].filter(e => e.entityType === 'cloud_resource' && !inMemoryCloudIds.has(e.id)),
     ];
 
+    // ── CloudResourceRepository ────────────────────────────────────────────
+    // Build the bounded in-memory store once here and pass to the SRE.
+    // Security: repository enforces maxResults on every query so no correlator
+    //           can accidentally receive an unbounded resource context window.
+    const cloudRepository = new CloudResourceRepository(cloudResourcesList as any[]);
+
     console.log(`[${task.taskId}] 🤖 Starting analysis + correlation stage (Steps 0–7)...`);
-    console.log(`[${task.taskId}] 📊 ${services.length} services, ${buildArtifacts.length} builds, ${deploymentArtifacts.length} deployments, ${cloudResources.length} cloud resources`);
+    console.log(`[${task.taskId}] 📊 ${services.length} services, ${buildArtifacts.length} builds, ${deploymentArtifacts.length} deployments, ${cloudRepository.totalCount} cloud resources`);
+    if (cloudRepository.totalCount > 0) {
+      console.log(`[${task.taskId}]    Resource groups: ${cloudRepository.listResourceGroups().join(', ') || '(none)'}`);
+    }
 
     // ── Repository Briefing ─────────────────────────────────────────────────
     // Produce a structured RepositoryBriefing from top-level manifest and config
     // files before running service analysis. The briefing is injected as shared
-    // orientation context into Step 1 (ServiceAnalyzer) so every service agent
+    // orientation context into Step 2 (ServiceAnalyzer) so every service agent
     // starts with a consistent picture of the repository.
     // Security: output is sanitized by RepositoryBriefingService before storage;
     //           failure is non-fatal — downstream steps degrade gracefully.
@@ -520,7 +530,7 @@ export class RepositoryTaskProcessor {
       services,
       buildArtifacts,
       deploymentArtifacts,
-      cloudResources: cloudResources as any[],
+      cloudRepository,
       repositoryBriefing,
     });
 

@@ -1,96 +1,192 @@
 /**
  * ServiceAnalyzer
  *
- * Replaces the former ExternalDepsAnalyzer. Produces a rich structured
- * ServiceAnalysis for each CodeService — including business description,
- * business value, tech stack, code structure, external/internal dependencies,
- * entry point types, and architectural patterns.
+ * Orchestrates the 3-pass pre-analysis pipeline for a single CodeService:
  *
- * The richer output is used as shared context by all downstream agents
- * (feature extraction, threat models, repository responsibility).
+ *   Pass 0 – ServiceFileMapper        → ServiceFileMap   (cheap, no content reads)
+ *   Pass 1 – ServiceSkeletonExtractor → ServiceSkeleton  (priority files only)
+ *   Pass 2 – ServiceSurfaceExtractor  → ServiceExternalSurface
+ *              Reads this service's config + client files AND, for each internal
+ *              sibling library not yet computed, its package.json + client files.
+ *              Pre-computed sibling surfaces are injected as structured context
+ *              so the agent does not re-read already-analysed libraries.
+ *
+ * Callers that process services in dependency order (leaves first) should
+ * populate `knownSiblings` with previously completed surfaces so that Pass 2
+ * receives the richest possible context without redundant LLM calls.
+ *
+ * The composed ServiceAnalysis (skeleton + enriched surface) replaces the old
+ * single-pass ServiceAnalyzer.
+ *
+ * Additionally, the skeleton's serviceDescription directly seeds
+ * CodeService.responsibility, eliminating the separate CodeSemanticAnalysisStage
+ * responsibility pass for services (Step 9 of the improvement plan).
  *
  * Security:
  *   - All LLM outputs are sanitized with sanitizeMetadata before use.
  *   - Errors are logged with only the message string.
- *   - The ServiceAnalysisCompletionTool rejects evidence fields that look
- *     like actual secret values.
- *   - Repository briefing context (if provided) is injected into the prompt
- *     as read-only orientation — it is never written back to the LLM tool.
+ *   - No secret values flow through any pass — only key names and file paths.
+ *   - Repository briefing context (if provided) is injected as read-only orientation.
+ *   - knownSiblings surfaces are sanitized before they were stored; no re-sanitization needed.
  */
 
 import type { ILLMApiHandler } from '@ai-agent/core';
-import type { CodeService, ExternalDep, RepositoryBriefing, ServiceAnalysis } from '@ai-agent/shared';
-import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
-import type { ServiceAnalysisInput } from '../../../agents/tools/serviceAnalysisCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../../../agents';
+import type {
+  CodeService,
+  ExternalDep,
+  RepositoryBriefing,
+  ServiceAnalysis,
+  ServiceExternalSurface,
+  ServiceFileMap,
+  ServiceSkeleton,
+} from '@ai-agent/shared';
+import { DataIndexerAgentRegistry, dataIndexerAgentRegistry } from '../../../agents';
+import { ServiceFileMapper } from './service-file-mapper';
+import { ServiceSkeletonExtractor } from './service-skeleton-extractor';
+import { ServiceSurfaceExtractor } from './service-surface-extractor';
 
 export class ServiceAnalyzer {
+  private readonly fileMapper: ServiceFileMapper;
+  private readonly skeletonExtractor: ServiceSkeletonExtractor;
+  private readonly surfaceExtractor: ServiceSurfaceExtractor;
+
   constructor(
     private readonly api: ILLMApiHandler,
     private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
-  ) {}
+  ) {
+    this.fileMapper = new ServiceFileMapper(api, registry);
+    this.skeletonExtractor = new ServiceSkeletonExtractor(api, registry);
+    this.surfaceExtractor = new ServiceSurfaceExtractor(api, registry);
+  }
 
   /**
-   * Run the full service analysis for a single CodeService.
+   * Run the 3-pass pipeline for a single CodeService.
+   *
+   * Returns a composed ServiceAnalysis (skeleton + surface), along with the
+   * raw ServiceFileMap, ServiceSkeleton, and ServiceExternalSurface so that
+   * the caller can persist them separately on the CodeService entity.
    *
    * @param service        - The service to analyse.
    * @param repositoryPath - Absolute path to the repository root (workspace).
    * @param briefing       - Optional repository briefing for orientation context.
-   * @returns              Sanitized ServiceAnalysis output.
+   * @param knownSiblings  - Map of serviceName → completed ServiceExternalSurface
+   *                         for sibling services already processed this run.
+   *                         Pass 2 injects these as context so transitive deps from
+   *                         known siblings do not require re-reading files.
    */
   async analyzeService(
     service: CodeService,
     repositoryPath: string,
     briefing?: RepositoryBriefing,
-  ): Promise<ServiceAnalysis> {
-    const servicePath = (service.metadata?.codePath as string) || service.codePath || '';
+    knownSiblings: Map<string, ServiceExternalSurface> = new Map(),
+  ): Promise<ServiceAnalysis & {
+    _fileMap: ServiceFileMap;
+    _skeleton: ServiceSkeleton;
+    _surface: ServiceExternalSurface;
+  }> {
+    const serviceName = service.name;
 
-    const briefingContext = briefing
-      ? `\n\n--- REPOSITORY BRIEFING (orientation context) ---\n` +
-        `Summary: ${briefing.summary}\n` +
-        `Languages: ${briefing.languages.join(', ')}\n` +
-        `Frameworks: ${briefing.frameworks.join(', ')}\n` +
-        `Build tools: ${briefing.buildTools.join(', ')}\n` +
-        `Services in this repo: ${briefing.serviceNames.join(', ')}\n` +
-        `Deployment targets: ${briefing.deploymentTargets.join(', ')}\n` +
-        `Architecture: ${briefing.architecturalPatterns.join(', ')}\n` +
-        `---`
-      : '';
-
-    const task = this.registry.createTask(DataIndexerAgentType.ServiceAnalyzer, this.api, {
-      workspace: repositoryPath,
-    });
-
-    const result = await task.execute<ServiceAnalysisInput>(
-      `Analyse the service "${service.name}" located at "${servicePath}" ` +
-        `(known tech stack: ${service.techStack?.join(', ') || 'unknown'}).` +
-        briefingContext + `\n\n` +
-        `YOUR GOAL: produce a complete ServiceAnalysis covering ALL six analysis steps.\n\n` +
-        `Step 1 — Package manifests: identify tech stack, runtime SDKs, external service packages.\n` +
-        `Step 2 — Env var files: flag *_URL, *_API_KEY, *_HOST, DATABASE_URL, REDIS_URL, etc.\n` +
-        `Step 3 — Config files: config.ts, settings.*, appSettings.json, src/config/.\n` +
-        `Step 4 — Entry points & architecture: index/main/app files, routes, workers — identify entry point types and patterns.\n` +
-        `Step 5 — Source scanning: HTTP clients, cloud SDK imports, sibling service imports.\n` +
-        `Step 6 — README/docs: business purpose, integration mentions.\n\n` +
-        `Then call complete_service_analysis.`,
-    );
-
-    if (!result.requiredOutput) {
-      console.warn(`   [SRE] Service analysis task produced no output for "${service.name}"`);
-      return this.buildFallbackAnalysis(service);
+    // ── Pass 0: File Map ───────────────────────────────────────────────────
+    console.log(`   [SRE/Pass 0] File mapper → "${serviceName}"`);
+    let fileMap: ServiceFileMap;
+    try {
+      fileMap = await this.fileMapper.mapServiceFiles(service, repositoryPath, briefing);
+      const totalPriority =
+        fileMap.priorityFiles.entry.length + fileMap.priorityFiles.routes.length +
+        fileMap.priorityFiles.models.length + fileMap.priorityFiles.types.length +
+        fileMap.priorityFiles.config.length + fileMap.priorityFiles.clients.length;
+      console.log(
+        `   [SRE/Pass 0]   ✅ "${serviceName}": ` +
+        `${totalPriority} priority files, ${fileMap.totalFiles} total`,
+      );
+    } catch (err) {
+      console.error(
+        `   [SRE/Pass 0]   ❌ "${serviceName}": file mapper failed:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      fileMap = { priorityFiles: { entry: [], routes: [], models: [], types: [], config: [], clients: [] }, skipFiles: [], estimatedSignalFiles: 0, totalFiles: 0 };
     }
 
-    const output = result.requiredOutput as unknown as ServiceAnalysisInput;
-    const sanitized = sanitizeMetadata(
-      output.serviceAnalysis as unknown as Record<string, unknown>,
-    ) as unknown as ServiceAnalysis;
+    // ── Pass 1: Skeleton ───────────────────────────────────────────────────
+    console.log(`   [SRE/Pass 1] Skeleton extractor → "${serviceName}"`);
+    let skeleton: ServiceSkeleton;
+    try {
+      skeleton = await this.skeletonExtractor.extractSkeleton(service, fileMap, repositoryPath, briefing);
+      console.log(
+        `   [SRE/Pass 1]   ✅ "${serviceName}": ` +
+        `${skeleton.exposedEndpoints.length} endpoint(s), ` +
+        `${skeleton.dataModels.length} model(s), ` +
+        `tech: ${skeleton.techStack.slice(0, 3).join(', ')}`,
+      );
+    } catch (err) {
+      console.error(
+        `   [SRE/Pass 1]   ❌ "${serviceName}": skeleton extractor failed:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      skeleton = this.skeletonExtractor['buildFallbackSkeleton'](service);
+    }
 
-    return sanitized;
+    // ── Pass 2: External Surface ───────────────────────────────────────────
+    // Reads this service's config + client files AND, for any unresolved
+    // internal sibling libraries, their package.json + client files.
+    // knownSiblings surfaces are injected as structured context in the prompt.
+    const siblingCount = skeleton.internalDependencies.length;
+    const knownCount = skeleton.internalDependencies.filter(d => knownSiblings.has(d)).length;
+    console.log(
+      `   [SRE/Pass 2] Surface extractor → "${serviceName}" ` +
+      `(${siblingCount} sibling(s): ${knownCount} known, ${siblingCount - knownCount} to scan)`,
+    );
+    let surface: ServiceExternalSurface;
+    try {
+      surface = await this.surfaceExtractor.extractSurface(
+        service, fileMap, skeleton, repositoryPath, briefing, knownSiblings,
+      );
+      console.log(
+        `   [SRE/Pass 2]   ✅ "${serviceName}": ` +
+        `${surface.externalDeps.length} external dep(s), ` +
+        `IDENTITY: [${surface.trustBoundaryMap.IDENTITY.join(', ')}], ` +
+        `DATA: [${surface.trustBoundaryMap.DATA.join(', ')}]`,
+      );
+    } catch (err) {
+      console.error(
+        `   [SRE/Pass 2]   ❌ "${serviceName}": surface extractor failed:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      surface = { externalDeps: [], trustBoundaryMap: { IDENTITY: [], DATA: [], EXTERNAL: [], INTERNET: [], SERVICE: [] } };
+    }
+
+    // ── Compose ServiceAnalysis ────────────────────────────────────────────
+    const analysis = this.composeServiceAnalysis(skeleton, surface);
+
+    return { ...analysis, _fileMap: fileMap, _skeleton: skeleton, _surface: surface };
+  }
+
+  /**
+   * Compose a ServiceAnalysis from a skeleton and an external surface.
+   * The skeleton covers code structure; the surface covers external deps.
+   */
+  private composeServiceAnalysis(
+    skeleton: ServiceSkeleton,
+    surface: ServiceExternalSurface,
+  ): ServiceAnalysis {
+    return {
+      serviceDescription: skeleton.serviceDescription,
+      businessValue: skeleton.businessValue,
+      techStack: skeleton.techStack,
+      codeStructure: skeleton.exposedEndpoints.length > 0
+        ? `Exposes ${skeleton.exposedEndpoints.length} endpoint(s): ${skeleton.exposedEndpoints.slice(0, 3).map(e => e.path).join(', ')}${skeleton.exposedEndpoints.length > 3 ? '...' : ''}`
+        : `Entry types: ${skeleton.entryPointTypes.join(', ')}`,
+      externalDeps: surface.externalDeps as ExternalDep[],
+      internalDependencies: skeleton.internalDependencies,
+      entryPointTypes: skeleton.entryPointTypes,
+      architecturalPatterns: skeleton.architecturalPatterns,
+    };
   }
 
   /**
    * Build a responsibility string from a ServiceAnalysis.
    * Used to populate CodeService.responsibility for semantic search.
+   * Seeded from the skeleton's serviceDescription — no extra LLM call needed.
    */
   buildServiceResponsibility(analysis: ServiceAnalysis): string {
     if (analysis.serviceDescription) return analysis.serviceDescription;
@@ -109,20 +205,5 @@ export class ServiceAnalyzer {
       );
     }
     return parts.join(' ') || `Service at ${analysis.codeStructure}.`;
-  }
-
-  // ── Private helpers ────────────────────────────────────────────────────────
-
-  private buildFallbackAnalysis(service: CodeService): ServiceAnalysis {
-    return {
-      serviceDescription: service.responsibility || service.name,
-      businessValue: `Provides ${service.serviceType} capabilities.`,
-      techStack: service.techStack ?? [],
-      codeStructure: service.codePath ?? '',
-      externalDeps: service.externalDeps ?? [],
-      internalDependencies: [],
-      entryPointTypes: ['other'],
-      architecturalPatterns: [],
-    };
   }
 }

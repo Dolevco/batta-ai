@@ -113,6 +113,91 @@ export interface ServiceAnalysis {
 }
 
 /**
+ * ServiceFileMap – compact classification of all files in a service directory.
+ *
+ * Produced by the ServiceFileMapper agent (Pass 0) in a single cheap scan.
+ * Acts as the reading list for all downstream agents — they read only the files
+ * in priorityFiles and skip those in skipFiles.
+ *
+ * Classification: INTERNAL — contains only file paths, no secret values.
+ */
+export interface ServiceFileMap {
+  /** High-signal files grouped by semantic role */
+  priorityFiles: {
+    /** Entry point files (index.ts, main.ts, app.ts, server.ts) */
+    entry: string[];
+    /** Route / controller / handler files */
+    routes: string[];
+    /** Data model, schema, ORM entity files */
+    models: string[];
+    /** TypeScript interfaces / types / Zod schemas / Pydantic models */
+    types: string[];
+    /** Config, settings, env-example files */
+    config: string[];
+    /** HTTP clients, SDK wrappers, external integration files */
+    clients: string[];
+  };
+  /** Low-signal files to skip (tests, generated code, utilities) */
+  skipFiles: string[];
+  /** Approximate number of high-signal files */
+  estimatedSignalFiles: number;
+  /** Total files in the service directory */
+  totalFiles: number;
+}
+
+/**
+ * ServiceSkeleton – structured high-level analysis from priority files only.
+ *
+ * Produced by the ServiceSkeletonExtractor agent (Pass 1) reading only the
+ * entry/routes/models/types/config files identified in the ServiceFileMap.
+ * Replaces the output of the old ServiceAnalyzer for the skeleton pass and
+ * feeds into both surface extraction and downstream agents.
+ *
+ * Classification: INTERNAL — no secret values.
+ */
+export interface ServiceSkeleton {
+  /** 1–3 sentence business-oriented description */
+  serviceDescription: string;
+  /** Why this service exists and who benefits */
+  businessValue: string;
+  /** Primary entry point types: 'http' | 'queue' | 'cron' | 'cli' | 'other' */
+  entryPointTypes: string[];
+  /** Dominant architectural patterns, e.g. ['REST API', 'Event-driven'] */
+  architecturalPatterns: string[];
+  /** Runtime technology stack, e.g. ['Node.js', 'Express', 'TypeScript', 'Prisma'] */
+  techStack: string[];
+  /** Exposed HTTP endpoints with method, path, and source file */
+  exposedEndpoints: Array<{ method: string; path: string; file: string }>;
+  /** Domain model names, e.g. ['User', 'Session', 'Payment'] */
+  dataModels: string[];
+  /** Names of internal sibling services this service calls or depends on */
+  internalDependencies: string[];
+}
+
+/**
+ * ServiceExternalSurface – exhaustive enumeration of the service's external boundary.
+ *
+ * Produced by the ServiceSurfaceExtractor agent (Pass 2) reading only
+ * config and client files identified in the ServiceFileMap.
+ * Injected as a pre-built trust boundary map into every DFD agent so they
+ * do not re-discover identity providers and data stores.
+ *
+ * Classification: INTERNAL — no secret values, only key names and import paths.
+ */
+export interface ServiceExternalSurface {
+  /** Exhaustively detected external dependencies with typed evidence */
+  externalDeps: ExternalDep[];
+  /** Pre-built trust boundary map grouping dep names by boundary type */
+  trustBoundaryMap: {
+    IDENTITY: string[];
+    DATA: string[];
+    EXTERNAL: string[];
+    INTERNET: string[];
+    SERVICE: string[];
+  };
+}
+
+/**
  * RepositoryBriefing – a concise structured overview of the entire repository.
  *
  * Produced once per indexing run (before per-service analysis) and passed as
@@ -161,6 +246,24 @@ export interface CodeService extends BaseEntity {
    * Classification: INTERNAL — no secret values.
    */
   serviceAnalysis?: ServiceAnalysis;
+  /**
+   * File classification map produced by ServiceFileMapper (Pass 0).
+   * Acts as the reading list for all downstream agents.
+   * Classification: INTERNAL — file paths only, no secrets.
+   */
+  serviceFileMap?: ServiceFileMap;
+  /**
+   * Structural skeleton produced by ServiceSkeletonExtractor (Pass 1).
+   * Covers endpoints, models, patterns, tech stack from priority files only.
+   * Classification: INTERNAL — no secret values.
+   */
+  serviceSkeleton?: ServiceSkeleton;
+  /**
+   * External surface enumeration produced by ServiceSurfaceExtractor (Pass 2).
+   * Pre-built trust boundary map for DFD agents.
+   * Classification: INTERNAL — key names and import paths only, no secrets.
+   */
+  serviceExternalSurface?: ServiceExternalSurface;
   // Threat model fields
   threatModel?: ThreatModelData;
   /**
@@ -246,12 +349,14 @@ export interface BuildArtifactAnalysis {
  */
 export interface BuildArtifact extends BaseEntity {
   entityType: 'build_artifact';
-  buildType: 'docker' | 'npm' | 'maven' | 'gradle' | 'other';
+  buildType: 'docker' | 'npm' | 'maven' | 'gradle' | 'script' | 'other';
   name: string;
   codePath: string; // Path to build file (e.g., Dockerfile)
   repositoryId: EntityId;
   serviceIds: EntityId[]; // Services this build produces
   technology: 'python' | 'node' | 'go' | 'java' | 'rust' | 'other';
+  /** Script language if buildType === 'script' (e.g. 'github-actions', 'azure-pipelines', 'makefile', 'bash') */
+  scriptLanguage?: string;
   responsibility?: string; // LLM-generated description
   /** Structured build artifact analysis extracted by ServiceRelationshipsExtractor */
   buildArtifactAnalysis?: BuildArtifactAnalysis;
@@ -325,6 +430,72 @@ export interface IaCAnalysis {
   namingConventions: string[];
   /** Free-text summary of what this IaC file does */
   summary: string;
+  /**
+   * Deployment target scope extracted deterministically from the IaC/script.
+   * Used by scope-resolver to filter cloud resources before LLM correlation.
+   */
+  deploymentTargets?: {
+    resourceGroups?: string[];
+    subscriptionIds?: string[];
+    regions?: string[];
+  };
+}
+
+/**
+ * ScriptAnalysisServiceRef – a service produced or deployed by a script.
+ * Security: evidence must only contain key names / config references — never actual secret values.
+ */
+export interface ScriptAnalysisServiceRef {
+  /** Service / image name extracted from CLI flags (-t, --name, etc.) */
+  name: string;
+  /** Full image reference (build output), e.g. "myregistry.azurecr.io/payments-api:$VERSION" */
+  outputName?: string;
+  /** Build context directory path (build scripts) */
+  sourceDirectory?: string;
+  /** Image name from --image flag (deployment scripts) */
+  imageName?: string;
+  /** CLI argument or script line proving this — NO secret values */
+  evidence?: string;
+}
+
+/**
+ * ScriptAnalysis – structured knowledge extracted from an imperative build or deployment script.
+ *
+ * Produced by ScriptAnalyzerAgent (Step 0.5). After production it is normalised
+ * into IaCAnalysis (for deployment scripts) and BuildArtifactAnalysis (for build scripts)
+ * so that Steps 1–6 correlators work identically to declarative artifacts.
+ *
+ * Security classification: INTERNAL — no secret values may appear in any field.
+ */
+export interface ScriptAnalysis {
+  // ── Build side ────────────────────────────────────────────────────────────
+  /** Services produced by this script (image builds, package builds) */
+  producedServices: ScriptAnalysisServiceRef[];
+  /** Build technology used, e.g. "docker build", "npm run build", "cargo build" */
+  buildTechnology?: string;
+  /** Target runtime, e.g. "node:20-alpine" */
+  targetRuntime?: string;
+  /** Notable build patterns, e.g. ["multi-stage", "layer caching"] */
+  buildPatterns: string[];
+
+  // ── Deployment side ───────────────────────────────────────────────────────
+  /** Services deployed by this script (az containerapp update --name …) */
+  deployedServices: ScriptAnalysisServiceRef[];
+  /** Cloud resources created by this script */
+  deployedResources: IaCResourceRef[];
+  /** Cloud resources referenced but not created */
+  usedResources: IaCResourceRef[];
+  /** Deployment target scope extracted from CLI arguments */
+  deploymentTargets: {
+    resourceGroups?: string[];
+    subscriptionIds?: string[];
+    regions?: string[];
+  };
+  /** Naming patterns across extracted names */
+  namingConventions: string[];
+
+  /** One-paragraph summary */
+  summary: string;
 }
 
 /**
@@ -354,6 +525,15 @@ export interface CloudResource extends BaseEntity {
   resourceId?: string; // Cloud provider's resource identifier
   region?: string;
   responsibility?: string; // LLM-generated description
+  // ── Scope fields (populated by AzureResourceGraphConnector) ──────────────
+  /** Parsed from ARM resource ID, e.g. "a1b2c3d4-…" */
+  subscriptionId?: string;
+  /** Resource group name (lower-cased for case-insensitive matching) */
+  resourceGroup?: string;
+  /** From tags["environment"] or tags["env"], e.g. "prod", "staging" */
+  environment?: string;
+  /** From tags["app"] or tags["application"] */
+  appTag?: string;
   // Threat model fields
   threatModel?: ThreatModelData;
 }

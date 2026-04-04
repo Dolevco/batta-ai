@@ -136,7 +136,7 @@ export class ToolParseUtils {
             return { toolUses };
         }
 
-        // Multiple tool calls: only allow if ALL are concurrency-safe
+        // Multiple tool calls: run safe ones in parallel, mark unsafe ones for rejection
         const unsafeTools = toolUses.filter(tu => !concurrencySafeToolNames.has(tu.name));
         if (unsafeTools.length > 0) {
             const unsafeNames = unsafeTools.map(tu => tu.name).join(', ');
@@ -144,14 +144,14 @@ export class ToolParseUtils {
             console.warn(
                 `[ToolParseUtils] LLM emitted ${toolUses.length} tool calls in one turn [${allNames}] ` +
                 `but ${unsafeNames} is not concurrency-safe. ` +
-                `Executing only the first ("${toolUses[0].name}") and discarding the rest. ` +
+                `Safe tools will run in parallel; unsafe tools will be rejected with an error. ` +
                 `Only tools marked "✓ Concurrency-safe" may be batched.`
             );
-            return { toolUses: [toolUses[0]] };
         }
 
-        // All tools are concurrency-safe — return all for parallel execution
-        return { toolUses };
+        // Return all tool uses — executeTools() will run safe ones in parallel
+        // and return synthetic failure results for unsafe ones.
+        return { toolUses, concurrencySafeToolNames };
     }
 
     /**

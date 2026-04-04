@@ -24,6 +24,12 @@ export enum DataIndexerAgentType {
   RepositoryBriefing    = 'repository-briefing',
   IacAnalyzer           = 'iac-analyzer',
   BuildArtifactAnalyzer = 'build-artifact-analyzer',
+  ScriptAnalyzer        = 'script-analyzer',
+  // ── 3-pass pre-analysis pipeline ──────────────────────────────────────────
+  ServiceFileMapper        = 'service-file-mapper',
+  ServiceSkeletonExtractor = 'service-skeleton-extractor',
+  ServiceExternalSurface   = 'service-external-surface',
+  // ── Legacy (kept for backward compat; orchestration now uses 3-pass) ──────
   ServiceAnalyzer       = 'service-analyzer',
   FeatureListExtractor  = 'feature-list-extractor',
   DfdExtractor          = 'dfd-extractor',
@@ -36,8 +42,12 @@ export enum DataIndexerAgentType {
 // ── Definition re-exports ─────────────────────────────────────────────────────
 
 export { REPOSITORY_BRIEFING_AGENT } from './definitions/repositoryBriefingAgent';
-export { IAC_ANALYZER_AGENT } from './definitions/iacAnalyzerAgent';
+export { IAC_ANALYZER_AGENT, createIaCAnalyzerAgentWithRepository } from './definitions/iacAnalyzerAgent';
 export { BUILD_ARTIFACT_ANALYZER_AGENT } from './definitions/buildArtifactAnalyzerAgent';
+export { SCRIPT_ANALYZER_AGENT, createScriptAnalyzerAgentWithRepository } from './definitions/scriptAnalyzerAgent';
+export { SERVICE_FILE_MAPPER_AGENT } from './definitions/serviceFileMapperAgent';
+export { SERVICE_SKELETON_EXTRACTOR_AGENT } from './definitions/serviceSkeletonExtractorAgent';
+export { SERVICE_EXTERNAL_SURFACE_AGENT } from './definitions/serviceExternalSurfaceAgent';
 export { SERVICE_ANALYZER_AGENT } from './definitions/serviceAnalyzerAgent';
 export { FEATURE_LIST_EXTRACTOR_AGENT } from './definitions/featureListExtractorAgent';
 export { DFD_EXTRACTOR_AGENT } from './definitions/dfdExtractorAgent';
@@ -52,6 +62,10 @@ import { DataIndexerAgentRegistry } from './registry';
 import { REPOSITORY_BRIEFING_AGENT } from './definitions/repositoryBriefingAgent';
 import { IAC_ANALYZER_AGENT } from './definitions/iacAnalyzerAgent';
 import { BUILD_ARTIFACT_ANALYZER_AGENT } from './definitions/buildArtifactAnalyzerAgent';
+import { SCRIPT_ANALYZER_AGENT } from './definitions/scriptAnalyzerAgent';
+import { SERVICE_FILE_MAPPER_AGENT } from './definitions/serviceFileMapperAgent';
+import { SERVICE_SKELETON_EXTRACTOR_AGENT } from './definitions/serviceSkeletonExtractorAgent';
+import { SERVICE_EXTERNAL_SURFACE_AGENT } from './definitions/serviceExternalSurfaceAgent';
 import { SERVICE_ANALYZER_AGENT } from './definitions/serviceAnalyzerAgent';
 import { FEATURE_LIST_EXTRACTOR_AGENT } from './definitions/featureListExtractorAgent';
 import { DFD_EXTRACTOR_AGENT } from './definitions/dfdExtractorAgent';
@@ -69,6 +83,10 @@ export const dataIndexerAgentRegistry = new DataIndexerAgentRegistry();
 dataIndexerAgentRegistry.register(REPOSITORY_BRIEFING_AGENT);
 dataIndexerAgentRegistry.register(IAC_ANALYZER_AGENT);
 dataIndexerAgentRegistry.register(BUILD_ARTIFACT_ANALYZER_AGENT);
+dataIndexerAgentRegistry.register(SCRIPT_ANALYZER_AGENT);
+dataIndexerAgentRegistry.register(SERVICE_FILE_MAPPER_AGENT);
+dataIndexerAgentRegistry.register(SERVICE_SKELETON_EXTRACTOR_AGENT);
+dataIndexerAgentRegistry.register(SERVICE_EXTERNAL_SURFACE_AGENT);
 dataIndexerAgentRegistry.register(SERVICE_ANALYZER_AGENT);
 dataIndexerAgentRegistry.register(FEATURE_LIST_EXTRACTOR_AGENT);
 dataIndexerAgentRegistry.register(DFD_EXTRACTOR_AGENT);

@@ -15,6 +15,12 @@ export { PolicyService } from './services/policyService';
 export { FeatureService, FEATURE_ANALYSES_COLLECTION } from './services/featureService';
 export type { FeatureSemanticSearchResult } from './services/featureService';
 
+// Pipeline output types (new 3-pass pre-analysis)
+export type { ServiceFileMap, ServiceSkeleton, ServiceExternalSurface } from './types/canonical.types';
+
+// Script analysis types
+export type { ScriptAnalysis, ScriptAnalysisServiceRef } from './types/canonical.types';
+
 // Business feature types
 export type {
   BusinessFeature,
@@ -33,6 +39,7 @@ export type {
   TrustBoundaryType,
   ActorType,
   ProcessType,
+  FeatureProcessType,
   DataStoreNodeType,
   StrideCategory,
   ThreatSeverity,
@@ -40,4 +47,4 @@ export type {
   ServiceThreatModel,
   FeatureChangeLogEntry,
 } from './types/business-feature.types';
-export { VALID_TRUST_BOUNDARY_TYPES } from './types/business-feature.types';
+export { VALID_TRUST_BOUNDARY_TYPES, VALID_FEATURE_PROCESS_TYPES } from './types/business-feature.types';

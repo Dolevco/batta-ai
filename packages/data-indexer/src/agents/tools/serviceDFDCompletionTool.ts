@@ -5,14 +5,25 @@
  * The LLM calls this tool to submit a clean architectural Data Flow Diagram
  * that maps all EXTERNAL relationships of the service.
  *
+ * Per DFD.MD, the service-level DFD answers: "how does this service fit into
+ * the world around it?" — an ARCHITECTURAL GRAPH showing every external
+ * relationship: who calls it, what it calls, and what data crosses each boundary.
+ *
  * The graph must remain at the architectural level:
  *  – processes[]   = only deployable services / microservices (one per service).
  *                    NO controllers, route handlers, or internal modules.
  *  – actors[]      = only external entities: human personas, identity providers,
  *                    monitoring agents, CDNs, other services that call this one.
  *  – dataStores[]  = only storage systems (one per system — no per-collection nodes).
- *  – flows[]       = EXACTLY ONE flow per (from, to) pair with a summarized label
- *                    and merged dataTypes[] covering all data on that edge.
+ *  – flows[]       = EXACTLY ONE flow per (from, to) pair with a summarized label,
+ *                    merged dataTypes[], accessPattern for data store flows, and
+ *                    topicName for event/queue flows.
+ *
+ * Per DFD.MD the service-level DFD edges must distinguish:
+ *   – Request/response calls with protocol
+ *   – Events published/consumed with topic/queue name (topicName field)
+ *   – Reads/writes to data stores (accessPattern: read | write | read_write)
+ *   – Auth flows — who authenticates whom
  *
  * Security: All enum values are allow-list validated. Duplicate (from, to) flow
  * pairs are rejected. No workspace paths or secret values may appear in any field
@@ -29,6 +40,7 @@ const VALID_PROCESS_TYPES = ['api_gateway', 'backend_service', 'worker', 'queue'
 const VALID_STORE_TYPES = ['database', 'cache', 'blob_storage', 'queue', 'file_system', 'other'];
 const VALID_CLASSIFICATIONS = ['public', 'internal', 'confidential', 'restricted'];
 const VALID_DIRECTIONS = ['inbound', 'outbound', 'bidirectional'];
+const VALID_ACCESS_PATTERNS = ['read', 'write', 'read_write'];
 
 export interface ServiceDFDInput extends Record<string, unknown> {
   serviceName: string;
@@ -42,28 +54,27 @@ export class ServiceDFDCompletionTool extends BaseTool<ServiceDFDInput> {
   category: ToolCategory = TaskCompletionCategory;
   description =
     'Submit the completed Service-Level Architectural Data Flow Diagram.\n\n' +
-    'PURPOSE: This DFD is an ARCHITECTURAL GRAPH that maps every EXTERNAL relationship ' +
-    'the service has — who calls it, what it calls, what data crosses each boundary. ' +
-    'It must stay clean: no internal subcomponents, one node per external entity, ' +
-    'one flow per (from, to) pair.\n\n' +
+    'PURPOSE: This DFD answers "how does this service fit into the world around it?" — an ' +
+    'ARCHITECTURAL GRAPH showing every EXTERNAL relationship the service has.\n\n' +
+    'Per DFD.MD, service-level DFD edges MUST distinguish:\n' +
+    '  • Request/response calls — with protocol (REST, gRPC, GraphQL)\n' +
+    '  • Events published/consumed — with topic/queue name (set topicName field)\n' +
+    '  • Reads/writes to data stores — distinguished (set accessPattern: read | write | read_write)\n' +
+    '  • Auth flows — who authenticates whom (include as a distinct flow to the IdP actor)\n\n' +
     'NODE RULES (strictly enforced):\n' +
     '  processes[]  → DEPLOYABLE SERVICES ONLY. One node per independently deployable ' +
-    '    service/microservice. The service being synthesised is itself one node. ' +
-    '    ❌ NO controllers, route handlers, middleware, or internal modules.\n' +
-    '  actors[]     → EXTERNAL ENTITIES ONLY. Human personas (end-user, admin, developer), ' +
-    '    identity providers (Azure AD, Auth0, Okta), monitoring/logging agents (Datadog, Sentry), ' +
-    '    API gateways, CDNs, and other services that call INTO this service. ' +
-    '    ❌ NO internal subcomponents of the service.\n' +
+    '    service/microservice. ❌ NO controllers, route handlers, middleware, or internal modules.\n' +
+    '  actors[]     → EXTERNAL ENTITIES ONLY. Human personas, identity providers, monitoring ' +
+    '    agents, API gateways, CDNs, other services that call INTO this service. ' +
+    '    ❌ NO internal subcomponents.\n' +
     '  dataStores[] → STORAGE SYSTEMS ONLY — one node per system (not per table/collection). ' +
-    '    Includes: databases, caches, message queues, blob stores, file systems, ' +
-    '    and logging/observability sinks that receive structured data.\n\n' +
+    '    Includes: databases, caches, message queues, blob stores, logging/observability sinks.\n\n' +
     'FLOW RULES (strictly enforced):\n' +
-    '  ✅ EXACTLY ONE flow per (from, to) pair — duplicates are rejected by validation.\n' +
-    '  ✅ If multiple data types flow between the same two nodes, merge into ONE flow ' +
-    '    with a summarized label (e.g. "auth tokens, user data, audit events") ' +
-    '    and list all dataTypes in dataTypes[].\n' +
-    '  ✅ Cover EVERY external communication: client→service, service→DB, service→cache, ' +
-    '    service→queue, service→IdP, service→logging, service→external-API.\n\n' +
+    '  ✅ EXACTLY ONE flow per (from, to) pair — duplicates are rejected.\n' +
+    '  ✅ Merge all data between the same two nodes into ONE flow (combined label + merged dataTypes[]).\n' +
+    '  ✅ Set accessPattern ("read" | "write" | "read_write") on all data store flows.\n' +
+    '  ✅ Set topicName on all event/queue flows.\n' +
+    '  ✅ Cover EVERY external communication: client→service, service→DB, cache, queue, IdP, logging, external-API.\n' +
     'All flow.from and flow.to values MUST reference IDs that exist in actors[], processes[], or dataStores[]. ' +
     'All enum values are case-sensitive. Validation errors are returned so you can fix and retry.';
 
@@ -77,7 +88,7 @@ export class ServiceDFDCompletionTool extends BaseTool<ServiceDFDInput> {
     {
       name: 'dataFlowDiagram',
       description:
-        'Architectural DFD object with these arrays (all required):\n\n' +
+        'Architectural DFD object — answers "how does this service fit into the world around it?"\n\n' +
         '  actors[]:     { id, label, type, trusted: boolean, trustBoundary?: TrustBoundaryType, correlationTags[] }\n' +
         '    type: external_user | admin | third_party | system | internal_service\n' +
         '    → ONLY external entities: human personas, identity providers, monitoring agents,\n' +
@@ -86,25 +97,21 @@ export class ServiceDFDCompletionTool extends BaseTool<ServiceDFDInput> {
         '    ❌ Do NOT place internal subcomponents of the service here.\n\n' +
         '  processes[]:  { id, label, type, trustBoundary?: TrustBoundaryType, correlationTags[] }\n' +
         '    type: api_gateway | backend_service | worker | queue | scheduler | other\n' +
-        '    → ONLY independently deployable services/microservices. The service being\n' +
-        '      synthesised is itself ONE process node.\n' +
+        '    → ONLY independently deployable services/microservices.\n' +
         '    ❌ Do NOT create nodes for controllers, route handlers, middleware, or modules.\n\n' +
         '  dataStores[]: { id, label, type, dataClassification, encryptionAtRest: boolean, trustBoundary?: TrustBoundaryType, correlationTags[] }\n' +
         '    type: database | cache | blob_storage | queue | file_system | other\n' +
-        '    dataClassification: public | internal | confidential | restricted\n' +
-        '    → ONE node per storage system. All collections/tables in one DB = one node.\n' +
-        '      Includes logging/observability sinks that receive structured write traffic.\n\n' +
-        '  flows[]:      { id, from, to, label, dataTypes: string[], dataClassification, direction, protocol, encrypted: boolean, authenticationRequired: boolean, crossesTrustBoundary: boolean }\n' +
-        '    dataClassification: public | internal | confidential | restricted\n' +
-        '    direction: inbound | outbound | bidirectional\n' +
-        '    → EXACTLY ONE flow per (from, to) pair. If multiple data types flow between\n' +
-        '      the same two nodes, use ONE flow with a combined label (e.g. "auth tokens,\n' +
-        '      user profiles, audit events") and list all dataTypes in dataTypes[].\n' +
-        '    → from and to MUST reference valid IDs from actors[], processes[], or dataStores[].\n\n' +
+        '    → ONE node per storage system. All collections/tables in one DB = one node.\n\n' +
+        '  flows[]:      { id, from, to, label, dataTypes: string[], dataClassification, direction, protocol, encrypted: boolean, authenticationRequired: boolean, crossesTrustBoundary: boolean, accessPattern?: (read|write|read_write), topicName?: string }\n' +
+        '    Per DFD.MD service-level edge requirements:\n' +
+        '    → label: concise summary of ALL data on the edge, e.g. "auth tokens, user profiles"\n' +
+        '    → accessPattern: REQUIRED for data store flows — set to "read", "write", or "read_write".\n' +
+        '      DFD.MD: "Reads/writes to data stores — distinguished (read vs write vs both)"\n' +
+        '    → topicName: REQUIRED for event/queue flows — set to the topic/queue/stream name.\n' +
+        '      DFD.MD: "Events published / consumed — with topic/queue name"\n' +
+        '    → Exactly ONE flow per (from, to) pair. Merge all data types into one flow.\n\n' +
         '  trustBoundaries[]: TrustBoundaryType[] — every type referenced by any node.\n' +
-        `    Must be one of: ${VALID_TRUST_BOUNDARY_TYPES.join(' | ')}\n` +
-        '    INTERNET=public clients, IDENTITY=IdP boundary, SERVICE=inter-service,\n' +
-        '    DATA=storage systems, EXTERNAL=third-party SaaS.\n\n' +
+        `    Must be one of: ${VALID_TRUST_BOUNDARY_TYPES.join(' | ')}\n\n` +
         'IMPORTANT: every boolean field must be JSON true/false, not the strings "true"/"false".',
       required: true,
       type: 'any',
@@ -253,6 +260,44 @@ export class ServiceDFDCompletionTool extends BaseTool<ServiceDFDInput> {
         errors.push(`flows[${i}].authenticationRequired must be a boolean.`);
       if (typeof f.crossesTrustBoundary !== 'boolean')
         errors.push(`flows[${i}].crossesTrustBoundary must be a boolean.`);
+
+      // ── Per-DFD.MD service-level edge validations ─────────────────────────
+
+      // accessPattern is required for data store flows
+      const accessPattern = (f as any).accessPattern;
+      if (accessPattern !== undefined && !VALID_ACCESS_PATTERNS.includes(accessPattern))
+        errors.push(
+          `flows[${i}].accessPattern "${accessPattern}" is invalid. Must be one of: ${VALID_ACCESS_PATTERNS.join(', ')}.`
+        );
+
+      // Check if either endpoint of the flow is a data store
+      const isDataStoreFlow =
+        (f.from && dfd.dataStores.some(d => d.id === f.from)) ||
+        (f.to && dfd.dataStores.some(d => d.id === f.to));
+      if (isDataStoreFlow && accessPattern === undefined) {
+        const storeName =
+          dfd.dataStores.find(d => d.id === f.from || d.id === f.to)?.label ?? 'unknown';
+        errors.push(
+          `flows[${i}] connects to data store "${storeName}" but is missing accessPattern. ` +
+          `Per DFD.MD: "Reads/writes to data stores — distinguished (read vs write vs both)". ` +
+          `Set accessPattern to "read", "write", or "read_write".`
+        );
+      }
+
+      // topicName is expected for flows to/from queue data stores
+      const isQueueFlow =
+        (f.from && dfd.dataStores.some(d => d.id === f.from && d.type === 'queue')) ||
+        (f.to && dfd.dataStores.some(d => d.id === f.to && d.type === 'queue'));
+      const topicName = (f as any).topicName;
+      if (isQueueFlow && !topicName?.trim()) {
+        const queueName =
+          dfd.dataStores.find(d => (d.id === f.from || d.id === f.to) && d.type === 'queue')?.label ?? 'unknown';
+        errors.push(
+          `flows[${i}] connects to queue/stream "${queueName}" but is missing topicName. ` +
+          `Per DFD.MD: "Events published / consumed — with topic/queue name". ` +
+          `Set topicName to the exact topic, queue, or stream name (e.g. "task-events", "payment.completed").`
+        );
+      }
     });
 
     // Enforce one flow per (from, to) pair — architectural graph rule

@@ -328,6 +328,8 @@ export class CodeTransformationStage implements TransformationStage {
       repositoryId: this.idUtils.repositoryId(this.tenantId, build.repository),
       serviceIds,
       technology: build.technology,
+      // Propagate scriptLanguage from metadata to the dedicated field
+      ...(build.metadata?.scriptLanguage ? { scriptLanguage: build.metadata.scriptLanguage as string } : {}),
       createdAt: now,
       updatedAt: now,
       confidence: 'deterministic',
