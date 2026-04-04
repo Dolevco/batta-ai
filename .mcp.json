@@ -1,0 +1,8 @@
+{
+    "mcpServers": {
+    "security-review": {
+      "type": "http",
+      "url": "https://batta.ai/api/mcp?repo=ai-agent"
+    }
+  }
+}

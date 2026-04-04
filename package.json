@@ -1,0 +1,45 @@
+{
+  "name": "ai-agent",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean",
+    "dev:api": "pnpm --filter @ai-agent/api dev",
+    "dev:ui": "pnpm --filter @ai-agent/ui dev",
+    "dev": "pnpm --parallel --filter @ai-agent/api --filter @ai-agent/ui dev",
+    "setup:azure": "bash ./scripts/setup-azure.sh",
+    "deploy:api": "bash ./scripts/deploy-api.sh",
+    "deploy:ui": "bash ./scripts/deploy-ui.sh",
+    "deploy": "bash ./scripts/deploy-api.sh && bash ./scripts/deploy-ui.sh",
+    "docker": "docker compose up --build -d",
+    "docker:https": "docker compose -f docker-compose-https.yml up --build -d"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.54.0",
+    "@typescript-eslint/parser": "^5.54.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^16.5.0",
+    "jest": "^29.5.0",
+    "prettier": "^2.8.4",
+    "ts-jest": "^29.0.5",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.48.1"
+  },
+  "workspaces": [
+    "packages/*"
+  ]
+}

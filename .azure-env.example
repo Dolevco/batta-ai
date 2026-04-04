@@ -1,0 +1,60 @@
+# Azure Configuration
+AZURE_RESOURCE_GROUP=ai-agent-prod
+AZURE_LOCATION=westeurope
+AZURE_CONTAINER_REGISTRY=        # Populated by setup:azure (e.g. aiagentprodacr)
+AZURE_SUBSCRIPTION_ID=           # Your Azure subscription ID
+
+# App / resource names — populated by setup:azure
+AZURE_API_APP_NAME=              # e.g. ai-agent-prod-api
+AZURE_QDRANT_APP_NAME=           # e.g. ai-agent-prod-qdrant
+AZURE_NEO4J_APP_NAME=            # e.g. ai-agent-prod-neo4j
+AZURE_WORKER_JOB_NAME=           # e.g. ai-agent-prod-worker
+AZURE_STORAGE_ACCOUNT=           # e.g. aiagentprodstor (used for UI static site + file shares)
+
+# Bicep base name (defaults to AZURE_RESOURCE_GROUP if unset)
+BICEP_BASE_NAME=ai-agent-prod
+
+# Redis Configuration
+REDIS_URL=
+
+# Qdrant Configuration
+QDRANT_API_KEY=your-generated-api-key
+TASK_COLLECTION_NAME=agent_tasks
+CHAT_MESSAGE_COLLECTION_NAME=chat_messages
+
+# Neo4j Configuration
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=                  # Set a strong password!
+
+# API Configuration
+UI_BASE_URL=https://your-ui-url.com
+
+# Azure OpenAI (Required)
+AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-api-key
+AZURE_OPENAI_DEPLOYMENT=gpt-4
+AZURE_OPENAI_API_VERSION=2024-02-01
+
+# Azure OpenAI Embeddings (Optional - will use main config if not set)
+AZURE_OPENAI_EMBEDDING_ENDPOINT=
+AZURE_OPENAI_EMBEDDING_API_KEY=
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-ada-002
+AZURE_OPENAI_EMBEDDING_API_VERSION=
+
+# GitHub App (Optional)
+GITHUB_APP_ID=
+GITHUB_APP_SLUG=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_REDIRECT_URI=
+
+# Slack (Optional)
+SLACK_CLIENT_ID=
+SLACK_CLIENT_SECRET=
+SLACK_REDIRECT_URI=
+
+# JWT Authentication (Optional)
+JWT_ISSUER=
+JWT_AUDIENCE=
+JWKS_URI=
+ENTRA_ENABLED=false
+ENTRA_TENANT_ID=

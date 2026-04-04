@@ -1,0 +1,1800 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "8635426938006034884"
+    }
+  },
+  "parameters": {
+    "baseName": {
+      "type": "string",
+      "metadata": {
+        "description": "Short base name used to derive all resource names (e.g. \"ai-agent-prod\")."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "project": "ai-agent",
+        "managedBy": "bicep"
+      },
+      "metadata": {
+        "description": "Resource tags applied to every resource."
+      }
+    },
+    "acrName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the derived ACR name. Set this when an existing registry is in use."
+      }
+    },
+    "containerAppsEnvName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the Container Apps Environment name. Set to adopt an existing environment."
+      }
+    },
+    "workerJobNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the worker Container Apps Job name. Set to adopt an existing job."
+      }
+    },
+    "storageAccountNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the derived storage account name. Set to adopt an existing storage account."
+      }
+    },
+    "redisNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the derived Redis cache name. Set to adopt an existing cache instance."
+      }
+    },
+    "apiImage": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Fully-qualified API image (e.g. myacr.azurecr.io/api:20250101.1200). Leave empty on first deploy to use a placeholder."
+      }
+    },
+    "workerImage": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Fully-qualified Worker image (e.g. myacr.azurecr.io/worker:20250101.1200). Leave empty on first deploy to use a placeholder."
+      }
+    },
+    "qdrantImage": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Fully-qualified Qdrant image in ACR (e.g. myacr.azurecr.io/qdrant:latest). Leave empty on first deploy; will be pushed by setup-azure.sh."
+      }
+    },
+    "neo4jImage": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Fully-qualified Neo4j image in ACR (e.g. myacr.azurecr.io/neo4j:5). Leave empty on first deploy; will be pushed by setup-azure.sh."
+      }
+    },
+    "redisUrl": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "qdrantApiKey": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "neo4jUsername": {
+      "type": "string",
+      "defaultValue": "neo4j",
+      "metadata": {
+        "description": "Neo4j username for the graph database."
+      }
+    },
+    "neo4jPassword": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Neo4j password for the graph database (set a strong value)."
+      }
+    },
+    "taskCollectionName": {
+      "type": "string",
+      "defaultValue": "agent_tasks"
+    },
+    "chatMessageCollectionName": {
+      "type": "string",
+      "defaultValue": "chat_messages"
+    },
+    "azureOpenAiEndpoint": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "azureOpenAiApiKey": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "azureOpenAiDeployment": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "azureOpenAiApiVersion": {
+      "type": "string",
+      "defaultValue": "2024-02-01"
+    },
+    "azureOpenAiEmbeddingEndpoint": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "azureOpenAiEmbeddingApiKey": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "azureOpenAiEmbeddingDeployment": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "azureOpenAiEmbeddingApiVersion": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "slackClientId": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "slackClientSecret": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "slackRedirectUri": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "githubAppId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "githubAppPrivateKey": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "githubAppSlug": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "githubRedirectUri": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "uiBaseUrl": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "jwtIssuer": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "jwtAudience": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "jwksUri": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "entraEnabled": {
+      "type": "string",
+      "defaultValue": "false"
+    },
+    "entraTenantId": {
+      "type": "securestring",
+      "defaultValue": ""
+    }
+  },
+  "variables": {
+    "resolvedApiImage": "[if(empty(parameters('apiImage')), 'mcr.microsoft.com/azuredocs/aci-helloworld:latest', parameters('apiImage'))]",
+    "resolvedWorkerImage": "[if(empty(parameters('workerImage')), 'mcr.microsoft.com/azuredocs/aci-helloworld:latest', parameters('workerImage'))]",
+    "resolvedQdrantImage": "[if(empty(parameters('qdrantImage')), 'mcr.microsoft.com/azuredocs/aci-helloworld:latest', parameters('qdrantImage'))]",
+    "resolvedNeo4jImage": "[if(empty(parameters('neo4jImage')), 'mcr.microsoft.com/azuredocs/aci-helloworld:latest', parameters('neo4jImage'))]"
+  },
+  "resources": {
+    "logs": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "logs",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "5511739702576653665"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "Short base name used to derive resource names."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2022-10-01",
+              "name": "[format('{0}-logs', parameters('baseName'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30
+              }
+            }
+          ],
+          "outputs": {
+            "workspaceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('baseName')))]"
+            },
+            "workspaceName": {
+              "type": "string",
+              "value": "[format('{0}-logs', parameters('baseName'))]"
+            },
+            "customerId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('baseName'))), '2022-10-01').customerId]"
+            },
+            "primarySharedKey": {
+              "type": "string",
+              "value": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('baseName'))), '2022-10-01').primarySharedKey]"
+            }
+          }
+        }
+      }
+    },
+    "registry": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "registry",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "acrName": {
+            "value": "[parameters('acrName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "6214120900439448381"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "Short base name used to derive resource names."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            },
+            "acrName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Override the derived ACR name (useful when adopting an existing registry)."
+              }
+            }
+          },
+          "variables": {
+            "derivedAcrName": "[take(toLower(replace(replace(replace(parameters('baseName'), '-', ''), '_', ''), '.', '')), 50)]",
+            "resolvedAcrName": "[if(empty(parameters('acrName')), variables('derivedAcrName'), parameters('acrName'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2023-07-01",
+              "name": "[variables('resolvedAcrName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Basic"
+              },
+              "properties": {
+                "adminUserEnabled": false,
+                "publicNetworkAccess": "Enabled"
+              }
+            }
+          ],
+          "outputs": {
+            "registryId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ContainerRegistry/registries', variables('resolvedAcrName'))]"
+            },
+            "registryName": {
+              "type": "string",
+              "value": "[variables('resolvedAcrName')]"
+            },
+            "loginServer": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('resolvedAcrName')), '2023-07-01').loginServer]"
+            }
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "storage",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "storageAccountNameOverride": {
+            "value": "[parameters('storageAccountNameOverride')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "2512698965067214587"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "Short base name used to derive resource names."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            },
+            "storageAccountNameOverride": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Override the derived storage account name (to adopt an existing account)."
+              }
+            }
+          },
+          "variables": {
+            "derivedStorageName": "[format('{0}stor', take(toLower(replace(replace(replace(parameters('baseName'), '-', ''), '_', ''), '.', '')), 20))]",
+            "resolvedStorageName": "[if(empty(parameters('storageAccountNameOverride')), variables('derivedStorageName'), parameters('storageAccountNameOverride'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-01-01",
+              "name": "[variables('resolvedStorageName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "minimumTlsVersion": "TLS1_2",
+                "allowBlobPublicAccess": true,
+                "supportsHttpsTrafficOnly": true
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}', variables('resolvedStorageName'), 'default')]",
+              "properties": {},
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('resolvedStorageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/fileServices",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}', variables('resolvedStorageName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('resolvedStorageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', variables('resolvedStorageName'), 'default', 'qdrant-data')]",
+              "properties": {
+                "shareQuota": 10
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('resolvedStorageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', variables('resolvedStorageName'), 'default', 'neo4j-data')]",
+              "properties": {
+                "shareQuota": 20
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('resolvedStorageName'), 'default')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "storageAccountId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Storage/storageAccounts', variables('resolvedStorageName'))]"
+            },
+            "storageAccountName": {
+              "type": "string",
+              "value": "[variables('resolvedStorageName')]"
+            },
+            "storageKey": {
+              "type": "string",
+              "value": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('resolvedStorageName')), '2023-01-01').keys[0].value]"
+            },
+            "shareName": {
+              "type": "string",
+              "value": "qdrant-data"
+            },
+            "neo4jShareName": {
+              "type": "string",
+              "value": "neo4j-data"
+            },
+            "staticWebsiteUrl": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('resolvedStorageName')), '2023-01-01').primaryEndpoints.web]"
+            }
+          }
+        }
+      }
+    },
+    "redis": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "redis",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "redisNameOverride": {
+            "value": "[parameters('redisNameOverride')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "15938341077113107828"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "Short base name used to derive resource names."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            },
+            "redisNameOverride": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Override the derived Redis name (to adopt an existing instance)."
+              }
+            }
+          },
+          "variables": {
+            "derivedRedisName": "[format('{0}-redis', toLower(replace(replace(parameters('baseName'), '_', '-'), '.', '-')))]",
+            "resolvedRedisName": "[if(empty(parameters('redisNameOverride')), variables('derivedRedisName'), parameters('redisNameOverride'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Cache/redis",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('resolvedRedisName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "name": "Basic",
+                  "family": "C",
+                  "capacity": 0
+                },
+                "enableNonSslPort": false,
+                "minimumTlsVersion": "1.2",
+                "redisConfiguration": {
+                  "maxmemory-policy": "allkeys-lru"
+                },
+                "publicNetworkAccess": "Enabled"
+              }
+            }
+          ],
+          "outputs": {
+            "redisName": {
+              "type": "string",
+              "value": "[variables('resolvedRedisName')]"
+            },
+            "redisHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').hostName]"
+            },
+            "redisSslPort": {
+              "type": "int",
+              "value": "[reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').sslPort]"
+            },
+            "redisUrl": {
+              "type": "string",
+              "value": "[format('rediss://:{0}@{1}:{2}', listKeys(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').primaryKey, reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').hostName, reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').sslPort)]"
+            }
+          }
+        }
+      }
+    },
+    "containerApps": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "container-apps",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "logAnalyticsWorkspaceId": {
+            "value": "[reference('logs').outputs.workspaceId.value]"
+          },
+          "logAnalyticsCustomerId": {
+            "value": "[reference('logs').outputs.customerId.value]"
+          },
+          "logAnalyticsKey": {
+            "value": "[reference('logs').outputs.primarySharedKey.value]"
+          },
+          "acrLoginServer": {
+            "value": "[reference('registry').outputs.loginServer.value]"
+          },
+          "acrId": {
+            "value": "[reference('registry').outputs.registryId.value]"
+          },
+          "workerImage": {
+            "value": "[variables('resolvedWorkerImage')]"
+          },
+          "neo4jImage": {
+            "value": "[variables('resolvedNeo4jImage')]"
+          },
+          "qdrantImage": {
+            "value": "[variables('resolvedQdrantImage')]"
+          },
+          "apiImage": {
+            "value": "[variables('resolvedApiImage')]"
+          },
+          "storageAccountName": {
+            "value": "[reference('storage').outputs.storageAccountName.value]"
+          },
+          "storageAccountKey": {
+            "value": "[reference('storage').outputs.storageKey.value]"
+          },
+          "storageShareName": {
+            "value": "[reference('storage').outputs.shareName.value]"
+          },
+          "neo4jShareName": {
+            "value": "[reference('storage').outputs.neo4jShareName.value]"
+          },
+          "qdrantApiKey": {
+            "value": "[parameters('qdrantApiKey')]"
+          },
+          "neo4jUsername": {
+            "value": "[parameters('neo4jUsername')]"
+          },
+          "neo4jPassword": {
+            "value": "[parameters('neo4jPassword')]"
+          },
+          "redisUrl": "[if(empty(parameters('redisUrl')), createObject('value', reference('redis').outputs.redisUrl.value), createObject('value', parameters('redisUrl')))]",
+          "taskCollectionName": {
+            "value": "[parameters('taskCollectionName')]"
+          },
+          "chatMessageCollectionName": {
+            "value": "[parameters('chatMessageCollectionName')]"
+          },
+          "azureOpenAiEndpoint": {
+            "value": "[parameters('azureOpenAiEndpoint')]"
+          },
+          "azureOpenAiApiKey": {
+            "value": "[parameters('azureOpenAiApiKey')]"
+          },
+          "azureOpenAiDeployment": {
+            "value": "[parameters('azureOpenAiDeployment')]"
+          },
+          "azureOpenAiApiVersion": {
+            "value": "[parameters('azureOpenAiApiVersion')]"
+          },
+          "azureOpenAiEmbeddingEndpoint": {
+            "value": "[parameters('azureOpenAiEmbeddingEndpoint')]"
+          },
+          "azureOpenAiEmbeddingApiKey": {
+            "value": "[parameters('azureOpenAiEmbeddingApiKey')]"
+          },
+          "azureOpenAiEmbeddingDeployment": {
+            "value": "[parameters('azureOpenAiEmbeddingDeployment')]"
+          },
+          "azureOpenAiEmbeddingApiVersion": {
+            "value": "[parameters('azureOpenAiEmbeddingApiVersion')]"
+          },
+          "slackClientId": {
+            "value": "[parameters('slackClientId')]"
+          },
+          "slackClientSecret": {
+            "value": "[parameters('slackClientSecret')]"
+          },
+          "slackRedirectUri": {
+            "value": "[parameters('slackRedirectUri')]"
+          },
+          "githubAppId": {
+            "value": "[parameters('githubAppId')]"
+          },
+          "githubAppPrivateKey": {
+            "value": "[parameters('githubAppPrivateKey')]"
+          },
+          "githubAppSlug": {
+            "value": "[parameters('githubAppSlug')]"
+          },
+          "githubRedirectUri": {
+            "value": "[parameters('githubRedirectUri')]"
+          },
+          "uiBaseUrl": {
+            "value": "[parameters('uiBaseUrl')]"
+          },
+          "azureSubscriptionId": {
+            "value": "[subscription().subscriptionId]"
+          },
+          "azureResourceGroup": {
+            "value": "[resourceGroup().name]"
+          },
+          "jwtIssuer": {
+            "value": "[parameters('jwtIssuer')]"
+          },
+          "jwtAudience": {
+            "value": "[parameters('jwtAudience')]"
+          },
+          "jwksUri": {
+            "value": "[parameters('jwksUri')]"
+          },
+          "entraEnabled": {
+            "value": "[parameters('entraEnabled')]"
+          },
+          "entraTenantId": {
+            "value": "[parameters('entraTenantId')]"
+          },
+          "envNameOverride": {
+            "value": "[parameters('containerAppsEnvName')]"
+          },
+          "workerJobNameOverride": {
+            "value": "[parameters('workerJobNameOverride')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "18147131287118418155"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "Short base name used to derive resource names."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Log Analytics workspace resource ID."
+              }
+            },
+            "logAnalyticsCustomerId": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics customer ID (used for Container Apps env)."
+              }
+            },
+            "logAnalyticsKey": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Log Analytics shared key."
+              }
+            },
+            "acrLoginServer": {
+              "type": "string",
+              "metadata": {
+                "description": "ACR login server (e.g. myregistry.azurecr.io)."
+              }
+            },
+            "acrId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the ACR (used for role assignment)."
+              }
+            },
+            "workerImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Fully-qualified worker image tag (e.g. myregistry.azurecr.io/worker:20250101.1200)."
+              }
+            },
+            "qdrantImage": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Fully-qualified Qdrant image tag in ACR (e.g. myacr.azurecr.io/qdrant:latest). Falls back to placeholder on first deploy."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name for Qdrant data."
+              }
+            },
+            "storageAccountKey": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Storage account key for Qdrant data."
+              }
+            },
+            "storageShareName": {
+              "type": "string",
+              "metadata": {
+                "description": "File share name for Qdrant data."
+              }
+            },
+            "neo4jShareName": {
+              "type": "string",
+              "metadata": {
+                "description": "File share name for Neo4j data."
+              }
+            },
+            "qdrantApiKey": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional Qdrant API key."
+              }
+            },
+            "neo4jUsername": {
+              "type": "string",
+              "defaultValue": "neo4j",
+              "metadata": {
+                "description": "Neo4j username."
+              }
+            },
+            "neo4jPassword": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Neo4j password (required — set a strong value)."
+              }
+            },
+            "neo4jImage": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Fully-qualified Neo4j image in ACR (e.g. myacr.azurecr.io/neo4j:5)."
+              }
+            },
+            "apiImage": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Fully-qualified API image in ACR (e.g. myacr.azurecr.io/api:20250101.1200)."
+              }
+            },
+            "redisUrl": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Redis connection URL."
+              }
+            },
+            "taskCollectionName": {
+              "type": "string",
+              "defaultValue": "agent_tasks",
+              "metadata": {
+                "description": "Qdrant collection name for tasks."
+              }
+            },
+            "chatMessageCollectionName": {
+              "type": "string",
+              "defaultValue": "chat_messages",
+              "metadata": {
+                "description": "Qdrant collection name for chat messages."
+              }
+            },
+            "azureOpenAiEndpoint": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "azureOpenAiApiKey": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "azureOpenAiDeployment": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "azureOpenAiApiVersion": {
+              "type": "string",
+              "defaultValue": "2024-02-01"
+            },
+            "azureOpenAiEmbeddingEndpoint": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "azureOpenAiEmbeddingApiKey": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "azureOpenAiEmbeddingDeployment": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "azureOpenAiEmbeddingApiVersion": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "slackClientId": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "slackClientSecret": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "slackRedirectUri": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "githubAppId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "githubAppPrivateKey": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "githubAppSlug": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "githubRedirectUri": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "uiBaseUrl": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "azureSubscriptionId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Azure Subscription ID (used by API to trigger worker jobs)."
+              }
+            },
+            "azureResourceGroup": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Azure Resource Group name (used by API to trigger worker jobs)."
+              }
+            },
+            "jwtIssuer": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "jwtAudience": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "jwksUri": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "entraEnabled": {
+              "type": "string",
+              "defaultValue": "false"
+            },
+            "entraTenantId": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "envNameOverride": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Override the Container Apps Environment name (to adopt an existing env)."
+              }
+            },
+            "workerJobNameOverride": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Override the worker job name (to adopt an existing job)."
+              }
+            }
+          },
+          "variables": {
+            "envName": "[if(empty(parameters('envNameOverride')), format('{0}-cae', parameters('baseName')), parameters('envNameOverride'))]",
+            "qdrantAppName": "[format('{0}-qdrant', parameters('baseName'))]",
+            "neo4jAppName": "[format('{0}-neo4j', parameters('baseName'))]",
+            "apiAppName": "[format('{0}-api', parameters('baseName'))]",
+            "workerJobName": "[if(empty(parameters('workerJobNameOverride')), format('{0}-worker', parameters('baseName')), parameters('workerJobNameOverride'))]",
+            "storageMountName": "qdrant-storage",
+            "neo4jStorageMountName": "neo4j-storage",
+            "resolvedQdrantImage": "[if(empty(parameters('qdrantImage')), 'mcr.microsoft.com/azuredocs/aci-helloworld:latest', parameters('qdrantImage'))]",
+            "resolvedNeo4jImage": "[if(empty(parameters('neo4jImage')), 'mcr.microsoft.com/azuredocs/aci-helloworld:latest', parameters('neo4jImage'))]",
+            "resolvedApiImage": "[if(empty(parameters('apiImage')), 'mcr.microsoft.com/azuredocs/aci-helloworld:latest', parameters('apiImage'))]",
+            "neo4jAuth": "[format('{0}/{1}', parameters('neo4jUsername'), parameters('neo4jPassword'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('envName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "appLogsConfiguration": {
+                  "destination": "log-analytics",
+                  "logAnalyticsConfiguration": {
+                    "customerId": "[parameters('logAnalyticsCustomerId')]",
+                    "sharedKey": "[parameters('logAnalyticsKey')]"
+                  }
+                },
+                "workloadProfiles": [
+                  {
+                    "name": "Consumption",
+                    "workloadProfileType": "Consumption"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments/storages",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}/{1}', variables('envName'), variables('storageMountName'))]",
+              "properties": {
+                "azureFile": {
+                  "accountName": "[parameters('storageAccountName')]",
+                  "accountKey": "[parameters('storageAccountKey')]",
+                  "shareName": "[parameters('storageShareName')]",
+                  "accessMode": "ReadWrite"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments/storages",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}/{1}', variables('envName'), variables('neo4jStorageMountName'))]",
+              "properties": {
+                "azureFile": {
+                  "accountName": "[parameters('storageAccountName')]",
+                  "accountKey": "[parameters('storageAccountKey')]",
+                  "shareName": "[parameters('neo4jShareName')]",
+                  "accessMode": "ReadWrite"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('qdrantAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 6333
+                  },
+                  "registries": [
+                    {
+                      "server": "[parameters('acrLoginServer')]",
+                      "identity": "system"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "qdrant",
+                      "image": "[variables('resolvedQdrantImage')]",
+                      "resources": {
+                        "cpu": "[json('0.5')]",
+                        "memory": "1Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "QDRANT__SERVICE__GRPC_PORT",
+                          "value": "6334"
+                        },
+                        {
+                          "name": "QDRANT__SERVICE__HTTP_PORT",
+                          "value": "6333"
+                        },
+                        {
+                          "name": "QDRANT__SERVICE__API_KEY",
+                          "value": "[parameters('qdrantApiKey')]"
+                        }
+                      ],
+                      "volumeMounts": [
+                        {
+                          "volumeName": "qdrant-volume",
+                          "mountPath": "/qdrant/storage"
+                        }
+                      ]
+                    }
+                  ],
+                  "volumes": [
+                    {
+                      "name": "qdrant-volume",
+                      "storageType": "AzureFile",
+                      "storageName": "[variables('storageMountName')]"
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "[resourceId('Microsoft.App/managedEnvironments/storages', variables('envName'), variables('storageMountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', last(split(parameters('acrId'), '/')))]",
+              "name": "[guid(parameters('acrId'), resourceId('Microsoft.App/containerApps', variables('qdrantAppName')), 'AcrPull-acr-scope')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+                "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('qdrantAppName')), '2024-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/containerApps', variables('qdrantAppName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('neo4jAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "configuration": {
+                  "ingress": {
+                    "external": false,
+                    "targetPort": 7474,
+                    "transport": "http"
+                  },
+                  "registries": [
+                    {
+                      "server": "[parameters('acrLoginServer')]",
+                      "identity": "system"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "neo4j",
+                      "image": "[variables('resolvedNeo4jImage')]",
+                      "resources": {
+                        "cpu": "[json('1')]",
+                        "memory": "2Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "NEO4J_AUTH",
+                          "value": "[variables('neo4jAuth')]"
+                        },
+                        {
+                          "name": "NEO4J_dbms_default__listen__address",
+                          "value": "0.0.0.0"
+                        },
+                        {
+                          "name": "NEO4J_dbms_connector_bolt_listen__address",
+                          "value": "0.0.0.0:7687"
+                        },
+                        {
+                          "name": "NEO4J_dbms_connector_http_listen__address",
+                          "value": "0.0.0.0:7474"
+                        },
+                        {
+                          "name": "NEO4J_dbms_memory_heap_initial__size",
+                          "value": "512m"
+                        },
+                        {
+                          "name": "NEO4J_dbms_memory_heap_max__size",
+                          "value": "1024m"
+                        }
+                      ],
+                      "volumeMounts": [
+                        {
+                          "volumeName": "neo4j-volume",
+                          "mountPath": "/data"
+                        }
+                      ]
+                    }
+                  ],
+                  "volumes": [
+                    {
+                      "name": "neo4j-volume",
+                      "storageType": "AzureFile",
+                      "storageName": "[variables('neo4jStorageMountName')]"
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "[resourceId('Microsoft.App/managedEnvironments/storages', variables('envName'), variables('neo4jStorageMountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', last(split(parameters('acrId'), '/')))]",
+              "name": "[guid(parameters('acrId'), resourceId('Microsoft.App/containerApps', variables('neo4jAppName')), 'AcrPull-acr-scope')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+                "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('neo4jAppName')), '2024-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/containerApps', variables('neo4jAppName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/jobs",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('workerJobName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "configuration": {
+                  "triggerType": "Manual",
+                  "replicaTimeout": 1800,
+                  "replicaRetryLimit": 0,
+                  "manualTriggerConfig": {
+                    "parallelism": 1,
+                    "replicaCompletionCount": 1
+                  },
+                  "registries": [
+                    {
+                      "server": "[parameters('acrLoginServer')]",
+                      "identity": "system"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "worker",
+                      "image": "[parameters('workerImage')]",
+                      "resources": {
+                        "cpu": "[json('1')]",
+                        "memory": "2Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "QDRANT_URL",
+                          "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('qdrantAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+                        },
+                        {
+                          "name": "REDIS_URL",
+                          "value": "[parameters('redisUrl')]"
+                        },
+                        {
+                          "name": "QDRANT_API_KEY",
+                          "value": "[parameters('qdrantApiKey')]"
+                        },
+                        {
+                          "name": "TASK_COLLECTION_NAME",
+                          "value": "[parameters('taskCollectionName')]"
+                        },
+                        {
+                          "name": "CHAT_MESSAGE_COLLECTION_NAME",
+                          "value": "[parameters('chatMessageCollectionName')]"
+                        },
+                        {
+                          "name": "NEO4J_URI",
+                          "value": "[format('bolt://{0}:7687', variables('neo4jAppName'))]"
+                        },
+                        {
+                          "name": "NEO4J_USERNAME",
+                          "value": "[parameters('neo4jUsername')]"
+                        },
+                        {
+                          "name": "NEO4J_PASSWORD",
+                          "value": "[parameters('neo4jPassword')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_ENDPOINT",
+                          "value": "[parameters('azureOpenAiEndpoint')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_API_KEY",
+                          "value": "[parameters('azureOpenAiApiKey')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_DEPLOYMENT",
+                          "value": "[parameters('azureOpenAiDeployment')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_API_VERSION",
+                          "value": "[parameters('azureOpenAiApiVersion')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_ENDPOINT",
+                          "value": "[parameters('azureOpenAiEmbeddingEndpoint')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_API_KEY",
+                          "value": "[parameters('azureOpenAiEmbeddingApiKey')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+                          "value": "[parameters('azureOpenAiEmbeddingDeployment')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_API_VERSION",
+                          "value": "[parameters('azureOpenAiEmbeddingApiVersion')]"
+                        },
+                        {
+                          "name": "SLACK_CLIENT_ID",
+                          "value": "[parameters('slackClientId')]"
+                        },
+                        {
+                          "name": "SLACK_CLIENT_SECRET",
+                          "value": "[parameters('slackClientSecret')]"
+                        },
+                        {
+                          "name": "SLACK_REDIRECT_URI",
+                          "value": "[parameters('slackRedirectUri')]"
+                        },
+                        {
+                          "name": "GITHUB_APP_ID",
+                          "value": "[parameters('githubAppId')]"
+                        },
+                        {
+                          "name": "GITHUB_APP_PRIVATE_KEY",
+                          "value": "[parameters('githubAppPrivateKey')]"
+                        },
+                        {
+                          "name": "GITHUB_APP_SLUG",
+                          "value": "[parameters('githubAppSlug')]"
+                        },
+                        {
+                          "name": "GITHUB_REDIRECT_URI",
+                          "value": "[parameters('githubRedirectUri')]"
+                        },
+                        {
+                          "name": "UI_BASE_URL",
+                          "value": "[parameters('uiBaseUrl')]"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "[resourceId('Microsoft.App/containerApps', variables('neo4jAppName'))]",
+                "[resourceId('Microsoft.App/containerApps', variables('qdrantAppName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', last(split(parameters('acrId'), '/')))]",
+              "name": "[guid(parameters('acrId'), resourceId('Microsoft.App/jobs', variables('workerJobName')), 'AcrPull-acr-scope')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+                "principalId": "[reference(resourceId('Microsoft.App/jobs', variables('workerJobName')), '2024-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/jobs', variables('workerJobName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('apiAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 3001,
+                    "transport": "http",
+                    "allowInsecure": false
+                  },
+                  "registries": [
+                    {
+                      "server": "[parameters('acrLoginServer')]",
+                      "identity": "system"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "api",
+                      "image": "[variables('resolvedApiImage')]",
+                      "resources": {
+                        "cpu": "[json('1')]",
+                        "memory": "2Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "PORT",
+                          "value": "3001"
+                        },
+                        {
+                          "name": "HTTPS",
+                          "value": "false"
+                        },
+                        {
+                          "name": "QDRANT_URL",
+                          "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('qdrantAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+                        },
+                        {
+                          "name": "QDRANT_API_KEY",
+                          "value": "[parameters('qdrantApiKey')]"
+                        },
+                        {
+                          "name": "REDIS_URL",
+                          "value": "[parameters('redisUrl')]"
+                        },
+                        {
+                          "name": "TASK_COLLECTION_NAME",
+                          "value": "[parameters('taskCollectionName')]"
+                        },
+                        {
+                          "name": "CHAT_MESSAGE_COLLECTION_NAME",
+                          "value": "[parameters('chatMessageCollectionName')]"
+                        },
+                        {
+                          "name": "NEO4J_URI",
+                          "value": "[format('bolt://{0}:7687', variables('neo4jAppName'))]"
+                        },
+                        {
+                          "name": "NEO4J_USERNAME",
+                          "value": "[parameters('neo4jUsername')]"
+                        },
+                        {
+                          "name": "NEO4J_PASSWORD",
+                          "value": "[parameters('neo4jPassword')]"
+                        },
+                        {
+                          "name": "AZURE_SUBSCRIPTION_ID",
+                          "value": "[parameters('azureSubscriptionId')]"
+                        },
+                        {
+                          "name": "AZURE_RESOURCE_GROUP",
+                          "value": "[parameters('azureResourceGroup')]"
+                        },
+                        {
+                          "name": "AZURE_CONTAINER_JOB_NAME",
+                          "value": "[variables('workerJobName')]"
+                        },
+                        {
+                          "name": "WORKER_ENVIRONMENT",
+                          "value": "azure"
+                        },
+                        {
+                          "name": "UI_BASE_URL",
+                          "value": "[parameters('uiBaseUrl')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_ENDPOINT",
+                          "value": "[parameters('azureOpenAiEndpoint')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_API_KEY",
+                          "value": "[parameters('azureOpenAiApiKey')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_DEPLOYMENT",
+                          "value": "[parameters('azureOpenAiDeployment')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_API_VERSION",
+                          "value": "[parameters('azureOpenAiApiVersion')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_ENDPOINT",
+                          "value": "[parameters('azureOpenAiEmbeddingEndpoint')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_API_KEY",
+                          "value": "[parameters('azureOpenAiEmbeddingApiKey')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+                          "value": "[parameters('azureOpenAiEmbeddingDeployment')]"
+                        },
+                        {
+                          "name": "AZURE_OPENAI_EMBEDDING_API_VERSION",
+                          "value": "[parameters('azureOpenAiEmbeddingApiVersion')]"
+                        },
+                        {
+                          "name": "SLACK_CLIENT_ID",
+                          "value": "[parameters('slackClientId')]"
+                        },
+                        {
+                          "name": "SLACK_CLIENT_SECRET",
+                          "value": "[parameters('slackClientSecret')]"
+                        },
+                        {
+                          "name": "SLACK_REDIRECT_URI",
+                          "value": "[parameters('slackRedirectUri')]"
+                        },
+                        {
+                          "name": "GITHUB_APP_ID",
+                          "value": "[parameters('githubAppId')]"
+                        },
+                        {
+                          "name": "GITHUB_APP_PRIVATE_KEY",
+                          "value": "[parameters('githubAppPrivateKey')]"
+                        },
+                        {
+                          "name": "GITHUB_APP_SLUG",
+                          "value": "[parameters('githubAppSlug')]"
+                        },
+                        {
+                          "name": "GITHUB_REDIRECT_URI",
+                          "value": "[parameters('githubRedirectUri')]"
+                        },
+                        {
+                          "name": "JWT_ISSUER",
+                          "value": "[parameters('jwtIssuer')]"
+                        },
+                        {
+                          "name": "JWT_AUDIENCE",
+                          "value": "[parameters('jwtAudience')]"
+                        },
+                        {
+                          "name": "JWKS_URI",
+                          "value": "[parameters('jwksUri')]"
+                        },
+                        {
+                          "name": "ENTRA_ENABLED",
+                          "value": "[parameters('entraEnabled')]"
+                        },
+                        {
+                          "name": "ENTRA_TENANT_ID",
+                          "value": "[parameters('entraTenantId')]"
+                        },
+                        {
+                          "name": "ENTRA_CLIENT_ID",
+                          "value": "[parameters('entraClientId')]"
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 3
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "[resourceId('Microsoft.App/containerApps', variables('neo4jAppName'))]",
+                "[resourceId('Microsoft.App/containerApps', variables('qdrantAppName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', last(split(parameters('acrId'), '/')))]",
+              "name": "[guid(parameters('acrId'), resourceId('Microsoft.App/containerApps', variables('apiAppName')), 'AcrPull-acr-scope')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+                "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('apiAppName')), '2024-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/containerApps', variables('apiAppName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceGroup().id, resourceId('Microsoft.App/containerApps', variables('apiAppName')), 'Contributor-rg-scope')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+                "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('apiAppName')), '2024-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/containerApps', variables('apiAppName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "qdrantInternalUrl": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('qdrantAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+            },
+            "neo4jInternalUrl": {
+              "type": "string",
+              "value": "[format('bolt://{0}:7687', variables('neo4jAppName'))]"
+            },
+            "workerJobName": {
+              "type": "string",
+              "value": "[variables('workerJobName')]"
+            },
+            "workerJobId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.App/jobs', variables('workerJobName'))]"
+            },
+            "apiAppName": {
+              "type": "string",
+              "value": "[variables('apiAppName')]"
+            },
+            "apiUrl": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('apiAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "logs",
+        "redis",
+        "registry",
+        "storage"
+      ]
+    }
+  },
+  "outputs": {
+    "acrLoginServer": {
+      "type": "string",
+      "value": "[reference('registry').outputs.loginServer.value]"
+    },
+    "acrName": {
+      "type": "string",
+      "value": "[reference('registry').outputs.registryName.value]"
+    },
+    "apiUrl": {
+      "type": "string",
+      "value": "[reference('containerApps').outputs.apiUrl.value]"
+    },
+    "uiUrl": {
+      "type": "string",
+      "value": "[reference('storage').outputs.staticWebsiteUrl.value]"
+    },
+    "apiAppName": {
+      "type": "string",
+      "value": "[reference('containerApps').outputs.apiAppName.value]"
+    },
+    "storageAccount": {
+      "type": "string",
+      "value": "[reference('storage').outputs.storageAccountName.value]"
+    },
+    "workerJobName": {
+      "type": "string",
+      "value": "[reference('containerApps').outputs.workerJobName.value]"
+    },
+    "qdrantUrl": {
+      "type": "string",
+      "value": "[reference('containerApps').outputs.qdrantInternalUrl.value]"
+    },
+    "neo4jUrl": {
+      "type": "string",
+      "value": "[reference('containerApps').outputs.neo4jInternalUrl.value]"
+    },
+    "redisName": {
+      "type": "string",
+      "value": "[reference('redis').outputs.redisName.value]"
+    },
+    "redisHostName": {
+      "type": "string",
+      "value": "[reference('redis').outputs.redisHostName.value]"
+    },
+    "redisUrl": {
+      "type": "securestring",
+      "value": "[if(empty(parameters('redisUrl')), reference('redis').outputs.redisUrl.value, parameters('redisUrl'))]"
+    }
+  }
+}

@@ -1,0 +1,71 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - ai-agent-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - ai-agent-network
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - packages/api/.env
+    environment:
+      # Override specific values for Docker environment
+      - PORT=3001
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379
+      - HTTPS=true
+      - SSL_KEY_PATH=/app/ssl/key.pem
+      - SSL_CERT_PATH=/app/ssl/cert.pem
+    volumes:
+      - ./ssl:/app/ssl:ro
+    depends_on:
+      - qdrant
+      - redis
+    networks:
+      - ai-agent-network
+
+  ui:
+    build:
+      context: .
+      dockerfile: packages/ui/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:443"
+    environment:
+      - HTTPS=true
+    volumes:
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+    networks:
+      - ai-agent-network
+
+volumes:
+  qdrant_storage:
+    driver: local
+
+networks:
+  ai-agent-network:
+    driver: bridge

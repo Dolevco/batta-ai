@@ -1,0 +1,413 @@
+import { Octokit } from '@octokit/rest';
+import { getInstallationToken } from './githubAuth';
+import { Tool, ToolResult, ToolCategory, GitToolConfig } from '@ai-agent/core';
+import { CodeIntegrationHandler, CodeIntegrationRepository } from '../types';
+
+const GitHubCategory: ToolCategory = {
+  name: 'github',
+  description: 'GitHub repository and issue management tools',
+  keywords: ['github', 'repository', 'issue', 'code'],
+};
+
+export interface GitHubConfig {
+  tenantId: string;
+  // Installation ID of the GitHub App installation (required)
+  installationId: string;
+  // Optional app id if stored in config; otherwise read from GITHUB_APP_ID
+  appId?: string;
+}
+
+export class GitHubIntegration implements CodeIntegrationHandler {
+  id = 'github';
+  name = 'GitHub';
+
+  // Cache for installation token to avoid creating tokens on every call
+  private tokenCache: { token: string; expiresAt: number } | null = null;
+
+  constructor(private config: GitHubConfig) {}
+  
+  static async validate(config: GitHubConfig): Promise<{ valid: boolean; error?: string }> {
+    if (!config.installationId) {
+      return { valid: false, error: 'GitHub installationId is required' };
+    }
+
+    try {
+      const instance = new GitHubIntegration(config);
+      const token = await instance.getAccessToken();
+      const octokit = new Octokit({ auth: token });
+      // Try listing repositories accessible to the installation as a validation step
+      await octokit.rest.apps.listReposAccessibleToInstallation();
+      return { valid: true };
+    } catch (error: any) {
+      return { valid: false, error: error?.message || 'Failed to validate GitHub installation' };
+    }
+  }
+
+  getCodingTools(config: GitToolConfig): Tool[] {
+    return [
+      this.createCreatePullRequestTool(config),
+    ];
+  }
+
+  getTools(): Tool[] {
+    return [
+    ];
+  }
+
+  private createGetUserTool(): Tool {
+    return {
+      name: 'githubGetUser',
+      category: GitHubCategory,
+      description: `Get information about the installation account. Tenant: ${this.config.tenantId}`,
+      parameters: [],
+      isInteractionTool: false,
+      execute: async (): Promise<ToolResult> => {
+        try {
+          const token = await this.getAccessToken();
+          const octokit = new Octokit({ auth: token });
+          const { data } = await octokit.rest.apps.getAuthenticated();
+          
+          return {
+            success: true,
+            message: 'User information retrieved successfully',
+            result: {
+              // Return the installation account or app-authenticated details
+              account: data,
+               tenantId: this.config.tenantId,
+             },
+           };
+         } catch (error: any) {
+           return {
+             success: false,
+             message: error?.message || 'Failed to get user information',
+             error: error?.toString?.(),
+           };
+         }
+       },
+     };
+   }
+ 
+   private createListReposTool(): Tool {
+     return {
+       name: 'githubListRepos',
+       category: GitHubCategory,
+       description: `List repositories accessible to the GitHub App installation. Tenant: ${this.config.tenantId}`,
+       parameters: [
+         { name: 'perPage', description: 'Number of repositories to return (max 100)', required: false, type: 'number' },
+         { name: 'page', description: 'Page number to retrieve', required: false, type: 'number' },
+       ],
+       isInteractionTool: false,
+       execute: async (params: Record<string, any>): Promise<ToolResult> => {
+         try {
+           const token = await this.getAccessToken();
+           const octokit = new Octokit({ auth: token });
+           const per_page = params.perPage || 30;
+           const page = params.page || 1;
+
+          // Use the Apps API to list repositories accessible to this installation.
+          // The response shape can be { total_count, repositories: [] }.
+          const response = await octokit.rest.apps.listReposAccessibleToInstallation({
+            per_page,
+            page,
+            // passing installation_id is safe and explicit
+            installation_id: Number(this.config.installationId),
+          });
+
+          // response.data may either be an array (older shapes) or an object with `repositories`.
+          const reposArray: any[] = Array.isArray(response.data)
+            ? response.data
+            : (response.data as any).repositories || [];
+
+           return {
+             success: true,
+             message: 'Repositories retrieved successfully',
+             result: {
+               repositories: reposArray.map((repo: any) => ({
+                 id: repo.id,
+                 name: repo.name,
+                 fullName: repo.full_name || repo.fullName,
+                 description: repo.description,
+                 private: repo.private,
+                 url: repo.html_url || repo.htmlUrl,
+                 language: repo.language,
+                 stars: repo.stargazers_count || repo.stargazersCount,
+                 forks: repo.forks_count || repo.forksCount,
+                 updatedAt: repo.updated_at || repo.updatedAt,
+               })),
+               tenantId: this.config.tenantId,
+             },
+           };
+         } catch (error: any) {
+           return {
+             success: false,
+             message: error?.message || 'Failed to list repositories',
+             error: error?.toString?.(),
+           };
+         }
+       },
+     };
+   }
+ 
+   private createGetRepoTool(): Tool {
+     return {
+       name: 'githubGetRepo',
+       category: GitHubCategory,
+       description: `Get detailed information about a specific GitHub repository. Tenant: ${this.config.tenantId}`,
+       parameters: [
+         { name: 'owner', description: 'Repository owner (username or organization)', required: true, type: 'string' },
+         { name: 'repo', description: 'Repository name', required: true, type: 'string' },
+       ],
+       isInteractionTool: false,
+       execute: async (params: Record<string, any>): Promise<ToolResult> => {
+         try {
+           const token = await this.getAccessToken();
+           const octokit = new Octokit({ auth: token });
+           const { data } = await octokit.rest.repos.get({
+             owner: params.owner,
+             repo: params.repo,
+           });
+           
+           return {
+             success: true,
+             message: 'Repository information retrieved successfully',
+             result: {
+               id: data.id,
+               name: data.name,
+               fullName: data.full_name,
+               description: data.description,
+               private: data.private,
+               url: data.html_url,
+               language: data.language,
+               stars: data.stargazers_count,
+               forks: data.forks_count,
+               openIssues: data.open_issues_count,
+               defaultBranch: data.default_branch,
+               createdAt: data.created_at,
+               updatedAt: data.updated_at,
+               tenantId: this.config.tenantId,
+             },
+           };
+         } catch (error: any) {
+           return {
+             success: false,
+             message: error?.message || 'Failed to get repository',
+             error: error?.toString?.(),
+           };
+         }
+       },
+     };
+   }
+ 
+   private createListIssuesTool(): Tool {
+     return {
+       name: 'githubListIssues',
+       category: GitHubCategory,
+       description: `List issues for a repository. Tenant: ${this.config.tenantId}`,
+       parameters: [
+         { name: 'owner', description: 'Repository owner (username or organization)', required: true, type: 'string' },
+         { name: 'repo', description: 'Repository name', required: true, type: 'string' },
+         { name: 'state', description: 'Issue state filter (open, closed, all)', required: false, type: 'string' },
+         { name: 'perPage', description: 'Number of issues to return (max 100)', required: false, type: 'number' },
+       ],
+       isInteractionTool: false,
+       execute: async (params: Record<string, any>): Promise<ToolResult> => {
+         try {
+           const token = await this.getAccessToken();
+           const octokit = new Octokit({ auth: token });
+           const { data } = await octokit.rest.issues.listForRepo({
+             owner: params.owner,
+             repo: params.repo,
+             state: params.state || 'open',
+             per_page: params.perPage || 30,
+           });
+           
+           return {
+             success: true,
+             message: 'Issues retrieved successfully',
+             result: {
+               issues: data.map((issue: any) => ({
+                 id: issue.id,
+                 number: issue.number,
+                 title: issue.title,
+                 body: issue.body,
+                 state: issue.state,
+                 url: issue.html_url,
+                 user: issue.user?.login,
+                 labels: issue.labels.map((l: any) => typeof l === 'string' ? l : l.name),
+                 createdAt: issue.created_at,
+                 updatedAt: issue.updated_at,
+               })),
+               tenantId: this.config.tenantId,
+             },
+           };
+         } catch (error: any) {
+           return {
+             success: false,
+             message: error?.message || 'Failed to list issues',
+             error: error?.toString?.(),
+           };
+         }
+       },
+     };
+   }
+ 
+   private createCreateIssueTool(): Tool {
+     return {
+       name: 'githubCreateIssue',
+       category: GitHubCategory,
+       description: `Create a new issue in a repository. Tenant: ${this.config.tenantId}`,
+       parameters: [
+         { name: 'owner', description: 'Repository owner (username or organization)', required: true, type: 'string' },
+         { name: 'repo', description: 'Repository name', required: true, type: 'string' },
+         { name: 'title', description: 'Issue title', required: true, type: 'string' },
+         { name: 'body', description: 'Issue body/description', required: false, type: 'string' },
+         { name: 'labels', description: 'Labels to add to the issue (comma-separated)', required: false, type: 'string' },
+       ],
+       isInteractionTool: false,
+       execute: async (params: Record<string, any>): Promise<ToolResult> => {
+         try {
+           const token = await this.getAccessToken();
+           const octokit = new Octokit({ auth: token });
+           const labels = params.labels ? params.labels.split(',').map((l: string) => l.trim()) : undefined;
+           const { data } = await octokit.rest.issues.create({
+             owner: params.owner,
+             repo: params.repo,
+             title: params.title,
+             body: params.body,
+             labels,
+           });
+           
+           return {
+             success: true,
+             message: 'Issue created successfully',
+             result: {
+               id: data.id,
+               number: data.number,
+               title: data.title,
+               url: data.html_url,
+               state: data.state,
+               createdAt: data.created_at,
+               tenantId: this.config.tenantId,
+             },
+           };
+         } catch (error: any) {
+           return {
+             success: false,
+             message: error?.message || 'Failed to create issue',
+             error: error?.toString?.(),
+           };
+         }
+       },
+     };
+   }
+
+  private createCreatePullRequestTool(githubConfig: GitToolConfig): Tool {
+    return {
+      name: 'githubCreatePullRequest',
+      category: GitHubCategory,
+      description: `Create a pull request in a repository. using the current fix branch as head and repostitory default branch as base`,
+      parameters: [
+        { name: 'title', description: 'Pull request title', required: true, type: 'string' },
+        { name: 'body', description: 'PR body', required: true, type: 'string' },
+        { name: 'draft', description: 'Create as draft', required: false, type: 'boolean' }
+      ],
+      isInteractionTool: false,
+      execute: async (params: Record<string, any>): Promise<ToolResult> => {
+        try {
+          const token = await this.getAccessToken();
+          const octokit = new Octokit({ auth: token });
+          const [owner, repo] = githubConfig.repository.split('/');
+
+          const { data } = await octokit.rest.pulls.create({
+            owner,
+            repo,
+            title: params.title,
+            head: githubConfig.currentBranch,
+            base: githubConfig.mainBranch,
+            body: params.body,
+            draft: params.draft === true || params.draft === 'true',
+          });
+
+          return {
+            success: true,
+            message: 'Pull request created successfully',
+            result: {
+              id: data.id,
+              number: data.number,
+              title: data.title,
+              url: data.html_url,
+              state: data.state,
+            },
+          };
+        } catch (error: any) {
+          return {
+            success: false,
+            message: error?.message || 'Failed to create pull request',
+            error: error?.toString?.(),
+          };
+        }
+      },
+    };
+  }
+
+  // Generate or return cached installation access token
+  public async getAccessToken(): Promise<string> {
+    const now = Date.now();
+    if (this.tokenCache && this.tokenCache.expiresAt > now + 5000) {
+      return this.tokenCache.token;
+    }
+
+    const installationId = this.config.installationId;
+    const authResult = await getInstallationToken(Number(installationId));
+    const token = authResult.token;
+    const expiresAt = authResult.expiresAt ? new Date(authResult.expiresAt).getTime() : (now + 55 * 60 * 1000);
+
+    this.tokenCache = { token, expiresAt };
+    return token;
+  }
+
+  // Return a list of repository objects accessible to this installation
+  public async getRepositories(): Promise<CodeIntegrationRepository[]> {
+    try {
+      const token = await this.getAccessToken();
+      const octokit = new Octokit({ auth: token });
+      const per_page = 100;
+      let page = 1;
+      const repos: CodeIntegrationRepository[] = [];
+
+      // paginate through accessible repos (limit to a reasonable max pages to avoid infinite loops)
+      const maxPages = 10;
+      while (page <= maxPages) {
+        const response = await octokit.rest.apps.listReposAccessibleToInstallation({
+          per_page,
+          page,
+          installation_id: Number(this.config.installationId),
+        });
+
+        const reposArray: any[] = Array.isArray(response.data)
+          ? response.data
+          : (response.data as any).repositories || [];
+
+        for (const repo of reposArray) {
+          const fullName = repo.full_name || repo.fullName || (repo.owner?.login && repo.name ? `${repo.owner.login}/${repo.name}` : repo.name);
+          if (!fullName) continue;
+          repos.push({
+            name: fullName.split('/').pop() || fullName,
+            url: repo.html_url || repo.htmlUrl || `https://github.com/${fullName}`,
+            language: repo.language,
+            description: repo.description,
+            defaultBranch: repo.default_branch || repo.defaultBranch || 'main',
+          });
+        }
+
+        if (reposArray.length < per_page) break;
+        page++;
+      }
+
+      return repos;
+    } catch (error) {
+      // On error, return empty list so callers can handle gracefully
+      return [];
+    }
+  }
+}

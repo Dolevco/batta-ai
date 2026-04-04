@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "15938341077113107828"
+    }
+  },
+  "parameters": {
+    "baseName": {
+      "type": "string",
+      "metadata": {
+        "description": "Short base name used to derive resource names."
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure region."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Resource tags."
+      }
+    },
+    "redisNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the derived Redis name (to adopt an existing instance)."
+      }
+    }
+  },
+  "variables": {
+    "derivedRedisName": "[format('{0}-redis', toLower(replace(replace(parameters('baseName'), '_', '-'), '.', '-')))]",
+    "resolvedRedisName": "[if(empty(parameters('redisNameOverride')), variables('derivedRedisName'), parameters('redisNameOverride'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Cache/redis",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('resolvedRedisName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "sku": {
+          "name": "Basic",
+          "family": "C",
+          "capacity": 0
+        },
+        "enableNonSslPort": false,
+        "minimumTlsVersion": "1.2",
+        "redisConfiguration": {
+          "maxmemory-policy": "allkeys-lru"
+        },
+        "publicNetworkAccess": "Enabled"
+      }
+    }
+  ],
+  "outputs": {
+    "redisName": {
+      "type": "string",
+      "value": "[variables('resolvedRedisName')]"
+    },
+    "redisHostName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').hostName]"
+    },
+    "redisSslPort": {
+      "type": "int",
+      "value": "[reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').sslPort]"
+    },
+    "redisUrl": {
+      "type": "string",
+      "value": "[format('rediss://:{0}@{1}:{2}', listKeys(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').primaryKey, reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').hostName, reference(resourceId('Microsoft.Cache/redis', variables('resolvedRedisName')), '2024-03-01').sslPort)]"
+    }
+  }
+}

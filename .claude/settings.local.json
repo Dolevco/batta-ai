@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "security-review"
+  ],
+  "enableAllProjectMcpServers": true
+}

@@ -1,0 +1,96 @@
+/* ── Global reset & base ─────────────────────────────────────────────────── */
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #F5F5F4;
+  color: #1C1917;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ── Scrollbar refinement (batta-ai style) ──────────────────────────────── */
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D6D3D1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #A8A29E; }
+
+/* ── Responsibility box ──────────────────────────────────────────────────── */
+
+.responsibility-box {
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+[data-theme='dark'] .responsibility-box,
+.dark .responsibility-box {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ── ReactFlow custom styles ────────────────────────────────────────────── */
+
+.react-flow__node {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.react-flow__node:hover {
+  transform: scale(1.03);
+  box-shadow: 0 4px 20px rgba(249, 115, 22, 0.2) !important;
+}
+
+.react-flow__node.selected {
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.4) !important;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.react-flow__controls {
+  border-radius: 10px !important;
+  border: 1px solid #E7E5E4 !important;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(28, 25, 23, 0.06) !important;
+}
+
+.react-flow__controls button {
+  border-bottom: 1px solid #E7E5E4 !important;
+  background: #FAFAF9 !important;
+  color: #78716C !important;
+}
+
+.react-flow__controls button:hover {
+  background: #F5F5F4 !important;
+  color: #1C1917 !important;
+}
+
+/* ── Ant Design Timeline dot fix ────────────────────────────────────────── */
+
+.ant-timeline-item-head-custom {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* ── Entrance animation ─────────────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.animate-in {
+  animation: fadeInUp 0.35s ease-out both;
+}
