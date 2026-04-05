@@ -28,6 +28,8 @@ export interface CodeIndexerConfig {
   cloudDiscovery?: any;
   maxConcurrency?: number;
   api: ILLMApiHandler; // ILLMApiHandler for semantic analysis
+  /** Optional small-model API handler. When set, agents tagged AgentModel.Small use this client. */
+  smallApi?: ILLMApiHandler;
   qdrant: QdrantAdapter; // Optional Qdrant adapter for vector storage
   neo4j: Neo4jAdapter; // Optional Neo4j adapter for graph storage
 }

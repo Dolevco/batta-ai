@@ -30,7 +30,6 @@
  *   - knownSiblings surfaces are sanitized before they were stored; no re-sanitization needed.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type {
   CodeService,
   ExternalDep,
@@ -40,7 +39,7 @@ import type {
   ServiceFileMap,
   ServiceSkeleton,
 } from '@ai-agent/shared';
-import { DataIndexerAgentRegistry, dataIndexerAgentRegistry } from '../../../agents';
+import { DataIndexerAgentRegistry } from '../../../agents';
 import { ServiceFileMapper } from './service-file-mapper';
 import { ServiceSkeletonExtractor } from './service-skeleton-extractor';
 import { ServiceSurfaceExtractor } from './service-surface-extractor';
@@ -50,13 +49,10 @@ export class ServiceAnalyzer {
   private readonly skeletonExtractor: ServiceSkeletonExtractor;
   private readonly surfaceExtractor: ServiceSurfaceExtractor;
 
-  constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
-  ) {
-    this.fileMapper = new ServiceFileMapper(api, registry);
-    this.skeletonExtractor = new ServiceSkeletonExtractor(api, registry);
-    this.surfaceExtractor = new ServiceSurfaceExtractor(api, registry);
+  constructor(registry: DataIndexerAgentRegistry) {
+    this.fileMapper = new ServiceFileMapper(registry);
+    this.skeletonExtractor = new ServiceSkeletonExtractor(registry);
+    this.surfaceExtractor = new ServiceSurfaceExtractor(registry);
   }
 
   /**

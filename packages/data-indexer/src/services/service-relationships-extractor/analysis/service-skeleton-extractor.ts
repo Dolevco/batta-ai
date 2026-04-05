@@ -10,16 +10,14 @@
  *   - Errors are logged with only the message string.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { CodeService, RepositoryBriefing, ServiceFileMap, ServiceSkeleton } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { ServiceSkeletonInput } from '../../../agents/tools/serviceSkeletonCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType } from '../../../agents';
 
 export class ServiceSkeletonExtractor {
   constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    private readonly registry: DataIndexerAgentRegistry,
   ) {}
 
   /**
@@ -44,7 +42,7 @@ export class ServiceSkeletonExtractor {
       ? `\nRepository: ${briefing.summary}\nPatterns: ${briefing.architecturalPatterns.join(', ')}`
       : '';
 
-    const task = this.registry.createTask(DataIndexerAgentType.ServiceSkeletonExtractor, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.ServiceSkeletonExtractor, {
       workspace: repositoryPath,
     });
 

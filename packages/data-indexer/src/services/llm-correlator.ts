@@ -11,7 +11,6 @@
  * It delegates entirely to ServiceRelationshipsExtractor.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type {
   BuildArtifact,
   CodeService,
@@ -22,6 +21,7 @@ import type {
   TenantId,
 } from '@ai-agent/shared';
 import { Neo4jAdapter, QdrantAdapter } from '@ai-agent/shared';
+import { DataIndexerAgentRegistry } from '../agents';
 import { ServiceRelationshipsExtractor } from './service-relationships-extractor/index';
 
 // ─── Public types (unchanged) ────────────────────────────────────────────────
@@ -46,8 +46,8 @@ export interface CorrelationResult {
 export class LLMCorrelator {
   private extractor: ServiceRelationshipsExtractor;
 
-  constructor(api: ILLMApiHandler, neo4j?: Neo4jAdapter, qdrant?: QdrantAdapter) {
-    this.extractor = new ServiceRelationshipsExtractor(api, neo4j, qdrant);
+  constructor(registry: DataIndexerAgentRegistry, neo4j?: Neo4jAdapter, qdrant?: QdrantAdapter) {
+    this.extractor = new ServiceRelationshipsExtractor(registry, neo4j, qdrant);
   }
 
   /**

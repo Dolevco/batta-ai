@@ -72,6 +72,15 @@ export interface TaskResult<T = unknown> {
 }
 
 /**
+ * Model tier for agent definitions.
+ * Maps to a concrete LLM deployment via the client factory at runtime.
+ */
+export enum AgentModel {
+  Small = 'small',
+  Large = 'large',
+}
+
+/**
  * Agent definition for typed sub-agents with scoped memory.
  */
 export interface AgentDefinition {
@@ -81,7 +90,7 @@ export interface AgentDefinition {
   /** Tool allowlist by name; undefined = all tools from the parent */
   tools?: string[];
   disallowedTools?: string[];
-  model?: string;
+  model?: AgentModel;
   maxIterations?: number;
   memory?: {
     scope: 'session' | 'project' | 'global';

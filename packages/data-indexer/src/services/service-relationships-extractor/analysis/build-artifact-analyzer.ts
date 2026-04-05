@@ -1,20 +1,18 @@
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { BuildArtifact, BuildArtifactAnalysis } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { BuildArtifactAnalysisInput } from '../../../agents/tools/buildArtifactAnalysisCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType } from '../../../agents';
 
 export class BuildArtifactAnalyzer {
   constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    private readonly registry: DataIndexerAgentRegistry,
   ) {}
 
   async analyzeBuildArtifactFile(
     artifact: BuildArtifact,
     repositoryPath: string,
   ): Promise<BuildArtifactAnalysis> {
-    const task = this.registry.createTask(DataIndexerAgentType.BuildArtifactAnalyzer, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.BuildArtifactAnalyzer, {
       workspace: repositoryPath,
     });
 

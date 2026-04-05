@@ -11,16 +11,14 @@
  *   - Errors are logged with only the message string.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { CodeService, RepositoryBriefing, ServiceFileMap } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { ServiceFileMapInput } from '../../../agents/tools/serviceFileMapCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType } from '../../../agents';
 
 export class ServiceFileMapper {
   constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    private readonly registry: DataIndexerAgentRegistry,
   ) {}
 
   /**
@@ -42,7 +40,7 @@ export class ServiceFileMapper {
       ? `\nRepository structure: ${briefing.structure}\nLanguages: ${briefing.languages.join(', ')}`
       : '';
 
-    const task = this.registry.createTask(DataIndexerAgentType.ServiceFileMapper, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.ServiceFileMapper, {
       workspace: repositoryPath,
     });
 

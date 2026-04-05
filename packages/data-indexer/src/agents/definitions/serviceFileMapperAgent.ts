@@ -11,12 +11,13 @@
  *
  * maxIterations: 10 — only needs to list directories and classify by name/extension.
  */
-import { createReadOnlyFileTools } from '@ai-agent/core';
+import { createReadOnlyFileTools, AgentModel } from '@ai-agent/core';
 import { ServiceFileMapCompletionTool } from '../tools/serviceFileMapCompletionTool';
 import type { DataIndexerAgentDefinition } from '../types';
 
 export const SERVICE_FILE_MAPPER_AGENT: DataIndexerAgentDefinition = {
   agentType: 'service-file-mapper',
+  model: AgentModel.Small,
   description:
     'Lists the file tree of a service directory and classifies each file into a semantic ' +
     'bucket (entry, routes, models, types, config, clients, skip) without reading contents. ' +

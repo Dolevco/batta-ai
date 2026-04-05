@@ -41,6 +41,7 @@ import { RepositorySetup } from './repository-setup';
 import { CloudResourceRepository } from './cloud-resource-repository';
 import type { CodeIndexerConfig } from '../connectors/stages/discovery.stage';
 import type { CodeService, DeploymentArtifact, BuildArtifact, RepositoryBriefing } from '@ai-agent/shared';
+import { createDataIndexerRegistry } from '../agents';
 
 export interface TaskProcessorConfig extends CodeIndexerConfig {
   checkpointManager: CheckpointManager;
@@ -125,10 +126,11 @@ export class RepositoryTaskProcessor {
     // ServiceRelationshipsExtractor runs Steps 0–7 (analysis + correlation + threat model).
     // Exploitability (Step 8) is exposed separately so Stage 6 can call it after
     // feature extraction, giving it access to the DFD-based threat model.
-    this.serviceRelationshipsExtractor = new ServiceRelationshipsExtractor(config.api, config.neo4j, config.qdrant);
+    const registry = createDataIndexerRegistry(config.api, config.smallApi);
+    this.serviceRelationshipsExtractor = new ServiceRelationshipsExtractor(registry, config.neo4j, config.qdrant);
     this.repositoryResponsibilityCalculator = new RepositoryResponsibilityCalculator(config.api, config.qdrant, config.neo4j);
-    this.repositoryBriefingService = new RepositoryBriefingService(config.api, config.qdrant, config.neo4j);
-    this.businessFeatureExtractor = new BusinessFeatureExtractor(config.api, config.qdrant, config.neo4j);
+    this.repositoryBriefingService = new RepositoryBriefingService(registry, config.qdrant, config.neo4j);
+    this.businessFeatureExtractor = new BusinessFeatureExtractor(registry, config.qdrant, config.neo4j);
     this.checkpointManager = config.checkpointManager;
 
     this.integrationFetcher = config.integrationFetcher || new IntegrationFetcher();

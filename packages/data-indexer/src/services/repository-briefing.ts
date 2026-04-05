@@ -21,19 +21,17 @@
  *   - Classification: INTERNAL — no secret values may appear in stored fields.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { CanonicalEntity, CodeRepository, RepositoryBriefing, TenantId } from '@ai-agent/shared';
 import { Neo4jAdapter, QdrantAdapter } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../utils/secret-sanitizer';
 import type { RepositoryBriefingInput } from '../agents/tools/repositoryBriefingCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType } from '../agents';
 
 export class RepositoryBriefingService {
   constructor(
-    private readonly api: ILLMApiHandler,
+    private readonly registry: DataIndexerAgentRegistry,
     private readonly qdrant?: QdrantAdapter,
     private readonly neo4j?: Neo4jAdapter,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
   ) {}
 
   /**
@@ -92,7 +90,7 @@ export class RepositoryBriefingService {
     repositoryName: string,
     repositoryPath: string,
   ): Promise<RepositoryBriefing> {
-    const task = this.registry.createTask(DataIndexerAgentType.RepositoryBriefing, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.RepositoryBriefing, {
       workspace: repositoryPath,
     });
 

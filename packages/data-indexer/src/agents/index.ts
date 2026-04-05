@@ -4,8 +4,9 @@
  * Single source of truth for all data-indexer pipeline agent roles.
  *
  * Usage:
- *   import { dataIndexerAgentRegistry, DataIndexerAgentType } from '../agents';
- *   const task = dataIndexerAgentRegistry.createTask(DataIndexerAgentType.IacAnalyzer, api, { workspace });
+ *   import { createDataIndexerRegistry, DataIndexerAgentType } from '../agents';
+ *   const registry = createDataIndexerRegistry(api, smallApi);
+ *   const task = registry.createTask(DataIndexerAgentType.IacAnalyzer, { workspace });
  *
  * Or inject the registry into a class constructor for testability:
  *   constructor(private readonly registry: DataIndexerAgentRegistry) {}
@@ -56,8 +57,9 @@ export { SERVICE_DFD_SYNTHESIS_AGENT } from './definitions/serviceDfdSynthesisAg
 export { SERVICE_THREAT_MODEL_AGENT } from './definitions/serviceThreatModelAgent';
 export { EXPLOITABILITY_ANALYZER_AGENT } from './definitions/exploitabilityAnalyzerAgent';
 
-// ── Singleton registry ────────────────────────────────────────────────────────
+// ── Registry factory ──────────────────────────────────────────────────────────
 
+import type { ILLMApiHandler } from '@ai-agent/core';
 import { DataIndexerAgentRegistry } from './registry';
 import { REPOSITORY_BRIEFING_AGENT } from './definitions/repositoryBriefingAgent';
 import { IAC_ANALYZER_AGENT } from './definitions/iacAnalyzerAgent';
@@ -75,22 +77,26 @@ import { SERVICE_THREAT_MODEL_AGENT } from './definitions/serviceThreatModelAgen
 import { EXPLOITABILITY_ANALYZER_AGENT } from './definitions/exploitabilityAnalyzerAgent';
 
 /**
- * Pre-populated singleton registry for all data-indexer pipeline agent roles.
- * Import this instance rather than constructing a new registry.
+ * Create a fully-populated DataIndexerAgentRegistry bound to the given LLM clients.
+ *
+ * @param api      - Default (large-model) LLM API handler.
+ * @param smallApi - Optional small-model handler. Agents tagged AgentModel.Small use this.
  */
-export const dataIndexerAgentRegistry = new DataIndexerAgentRegistry();
-
-dataIndexerAgentRegistry.register(REPOSITORY_BRIEFING_AGENT);
-dataIndexerAgentRegistry.register(IAC_ANALYZER_AGENT);
-dataIndexerAgentRegistry.register(BUILD_ARTIFACT_ANALYZER_AGENT);
-dataIndexerAgentRegistry.register(SCRIPT_ANALYZER_AGENT);
-dataIndexerAgentRegistry.register(SERVICE_FILE_MAPPER_AGENT);
-dataIndexerAgentRegistry.register(SERVICE_SKELETON_EXTRACTOR_AGENT);
-dataIndexerAgentRegistry.register(SERVICE_EXTERNAL_SURFACE_AGENT);
-dataIndexerAgentRegistry.register(SERVICE_ANALYZER_AGENT);
-dataIndexerAgentRegistry.register(FEATURE_LIST_EXTRACTOR_AGENT);
-dataIndexerAgentRegistry.register(DFD_EXTRACTOR_AGENT);
-dataIndexerAgentRegistry.register(FEATURE_THREAT_MODEL_AGENT);
-dataIndexerAgentRegistry.register(SERVICE_DFD_SYNTHESIS_AGENT);
-dataIndexerAgentRegistry.register(SERVICE_THREAT_MODEL_AGENT);
-dataIndexerAgentRegistry.register(EXPLOITABILITY_ANALYZER_AGENT);
+export function createDataIndexerRegistry(api: ILLMApiHandler, smallApi?: ILLMApiHandler): DataIndexerAgentRegistry {
+  const registry = new DataIndexerAgentRegistry(api, smallApi);
+  registry.register(REPOSITORY_BRIEFING_AGENT);
+  registry.register(IAC_ANALYZER_AGENT);
+  registry.register(BUILD_ARTIFACT_ANALYZER_AGENT);
+  registry.register(SCRIPT_ANALYZER_AGENT);
+  registry.register(SERVICE_FILE_MAPPER_AGENT);
+  registry.register(SERVICE_SKELETON_EXTRACTOR_AGENT);
+  registry.register(SERVICE_EXTERNAL_SURFACE_AGENT);
+  registry.register(SERVICE_ANALYZER_AGENT);
+  registry.register(FEATURE_LIST_EXTRACTOR_AGENT);
+  registry.register(DFD_EXTRACTOR_AGENT);
+  registry.register(FEATURE_THREAT_MODEL_AGENT);
+  registry.register(SERVICE_DFD_SYNTHESIS_AGENT);
+  registry.register(SERVICE_THREAT_MODEL_AGENT);
+  registry.register(EXPLOITABILITY_ANALYZER_AGENT);
+  return registry;
+}

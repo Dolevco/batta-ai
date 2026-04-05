@@ -1,9 +1,10 @@
-import { createReadOnlyFileTools } from '@ai-agent/core';
+import { createReadOnlyFileTools, AgentModel } from '@ai-agent/core';
 import { RepositoryBriefingCompletionTool } from '../tools/repositoryBriefingCompletionTool';
 import type { DataIndexerAgentDefinition } from '../types';
 
 export const REPOSITORY_BRIEFING_AGENT: DataIndexerAgentDefinition = {
   agentType: 'repository-briefing',
+  model: AgentModel.Small,
   description:
     'Produces a concise structured overview of a repository — languages, frameworks, build tools, ' +
     'repository structure, service names, deployment targets, and architectural patterns — by reading ' +

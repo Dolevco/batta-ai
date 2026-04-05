@@ -17,7 +17,9 @@
  *   layer which scopes all writes to tenantId.
  */
 
-import { createIndexingRunRepository } from '@ai-agent/shared';
+import { AzureOpenAIClient } from '@ai-agent/core';
+import { IntegrationFetcher, RepositoryTaskProcessor, TaskType, CodeDiscoveryStage, QueueManager, CodeIndexingOrchestrator } from '@ai-agent/data-indexer';
+import { createIndexingRunRepository, createQdrantDataAdapter, Neo4jAdapter } from '@ai-agent/shared';
 
 export type ScanStatus = 'queued' | 'running' | 'completed' | 'failed';
 
@@ -156,12 +158,6 @@ export async function discoverRepositories(
   tenantId: string
 ): Promise<Array<{ name: string; url: string; defaultBranch: string }>> {
   try {
-    const { IntegrationFetcher } = await import('@ai-agent/data-indexer');
-    // @ts-ignore – internal path; CodeDiscoveryStage is not re-exported from the package index
-    const { CodeDiscoveryStage } = await import(
-      '@ai-agent/data-indexer/dist/connectors/stages/discovery.stage.js'
-    );
-
     const fetcher = new IntegrationFetcher();
     await fetcher.initialize();
     const integrations = await fetcher.fetchIntegrations(tenantId);
@@ -317,12 +313,6 @@ async function runOrchestrationStream(
   stageUpdate('Code Discovery', 'running');
 
   try {
-    const { IntegrationFetcher, RepositoryTaskProcessor, TaskType } = await import('@ai-agent/data-indexer');
-    // @ts-ignore – internal path
-    const { CodeDiscoveryStage } = await import(
-      '@ai-agent/data-indexer/dist/connectors/stages/discovery.stage.js'
-    );
-
     // ── Discovery ───────────────────────────────────────────────────────────
     const fetcher = new IntegrationFetcher();
     await fetcher.initialize();
@@ -360,13 +350,6 @@ async function runOrchestrationStream(
     markQueuedStages(rec, options);
     emit();
 
-    // ── Per-repository full pipeline ────────────────────────────────────────
-    // Build a shared processor config from the environment.
-    // Security: api/qdrant/neo4j config is read from process.env which is set
-    // at startup from trusted configuration — never from user input.
-    const { createQdrantDataAdapter, Neo4jAdapter } = await import('@ai-agent/shared');
-    // @ts-ignore – ILLMApiHandler implementation
-    const { AzureOpenAIClient } = await import('@ai-agent/core');
 
     const qdrantAdapter = createQdrantDataAdapter();
     let neo4jAdapter: any;
@@ -391,6 +374,21 @@ async function runOrchestrationStream(
       console.warn('[ScanService] LLM API init failed; semantic analysis will be skipped:', (llmErr as Error).message);
     }
 
+    let smallLLMApi: any;
+    if (!!process.env.AZURE_OPENAI_SMALL_DEPLOYMENT)
+    try {
+      smallLLMApi = new AzureOpenAIClient({
+        endpoint: process.env.AZURE_OPENAI_ENDPOINT || '',
+        apiKey: process.env.AZURE_OPENAI_API_KEY || '',
+        deploymentName: process.env.AZURE_OPENAI_SMALL_DEPLOYMENT || '',
+        apiVersion: process.env.AZURE_OPENAI_SMALL_API_VERSION || process.env.AZURE_OPENAI_API_VERSION || '2024-12-01-preview',
+      });
+    } catch (llmErr) {
+      // LLM is optional (semantic analysis + correlation will be skipped)
+      console.warn('[ScanService] LLM API init failed; semantic analysis will be skipped:', (llmErr as Error).message);
+    }
+    
+
     const checkpointManager = new InMemoryCheckpointManager();
 
     const processorConfig = {
@@ -398,6 +396,7 @@ async function runOrchestrationStream(
       enableCloudDiscovery: options.enableCloudDiscovery,
       cloneDir: process.env.CLONE_DIR || '/tmp/ai-agent-clones',
       api: llmApi,
+      smallApi: smallLLMApi,
       qdrant: qdrantAdapter,
       neo4j: neo4jAdapter,
       checkpointManager,
@@ -532,10 +531,6 @@ async function runOrchestration(
   updateStage(rec, 'Code Discovery', 'running');
 
   try {
-    // Lazy-import to avoid bloating the API startup bundle
-    const { CodeIndexingOrchestrator } = await import('@ai-agent/data-indexer');
-    const { QueueManager } = await import('@ai-agent/data-indexer');
-
     let queueManager: InstanceType<typeof QueueManager> | undefined;
 
     try {
@@ -596,12 +591,6 @@ async function runDirectIndexing(
   rec: ScanRecord
 ): Promise<void> {
   try {
-    const { IntegrationFetcher } = await import('@ai-agent/data-indexer');
-    const { CodeDiscoveryStage } = await import(
-      // @ts-ignore – internal path used only in fallback path
-      '@ai-agent/data-indexer/dist/connectors/stages/discovery.stage.js'
-    );
-
     const fetcher = new IntegrationFetcher();
     await fetcher.initialize();
     const integrations = await fetcher.fetchIntegrations(tenantId);

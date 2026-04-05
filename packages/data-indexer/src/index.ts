@@ -22,8 +22,6 @@ export { SecurityQueryTools } from '@ai-agent/shared';
 export type { SecurityQueryConfig } from '@ai-agent/shared';
 export { VulnerabilityImpactAnalyzer } from '@ai-agent/shared';
 
-export { }
-
 // Services
 export { CloudDiscoveryStage } from './services/cloud-discovery.stage';
 export type { CloudDiscoveryConfig, CloudDiscoveryOutput } from './services/cloud-discovery.stage';export { LLMCorrelator } from './services/llm-correlator';
@@ -50,6 +48,7 @@ export * from './types/queue.types';
 
 // Connectors
 export { CodeIndexingPipeline } from './connectors/code.pipeline';
+export { CodeDiscoveryStage } from './connectors/stages/discovery.stage';
 export type { CodeIndexerConfig } from './connectors/code.pipeline';
 export { AzureResourceGraphConnector } from './connectors/azure-resource-graph.connector';
 export type { AzureResourceGraphConfig } from './connectors/azure-resource-graph.connector';

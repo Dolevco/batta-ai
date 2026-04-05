@@ -1,9 +1,10 @@
-import { createReadOnlyFileTools } from '@ai-agent/core';
+import { createReadOnlyFileTools, AgentModel } from '@ai-agent/core';
 import { BuildArtifactAnalysisCompletionTool } from '../tools/buildArtifactAnalysisCompletionTool';
 import type { DataIndexerAgentDefinition } from '../types';
 
 export const BUILD_ARTIFACT_ANALYZER_AGENT: DataIndexerAgentDefinition = {
   agentType: 'build-artifact-analyzer',
+  model: AgentModel.Small,
   description:
     'Analyses build artifact files (Dockerfiles, package.json build scripts, Maven POMs, ' +
     'Gradle build files, Cargo.toml, etc.) to extract produced services, build technology, ' +

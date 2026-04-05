@@ -43,9 +43,9 @@
  *   - cloudResources backward-compat input is wrapped in a bounded repository on entry.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { BuildArtifact, CloudResource, CodeService, DeploymentArtifact, EntityId, RepositoryBriefing, Relationship, ServiceExternalSurface } from '@ai-agent/shared';
 import { Neo4jAdapter, QdrantAdapter } from '@ai-agent/shared';
+import { DataIndexerAgentRegistry } from '../../agents';
 
 import type { ServiceRelationshipsInput, ServiceRelationshipsResult } from './types';
 import { PersistenceHelper } from './helpers/persistence';
@@ -74,15 +74,15 @@ export class ServiceRelationshipsExtractor {
   private readonly exploitabilityAnalyzer: ExploitabilityAnalyzer;
 
   constructor(
-    private readonly api: ILLMApiHandler,
+    private readonly registry: DataIndexerAgentRegistry,
     private readonly neo4j?: Neo4jAdapter,
     private readonly qdrant?: QdrantAdapter,
   ) {
     this.persistence = new PersistenceHelper(neo4j, qdrant);
-    this.iacAnalyzer = new IaCAnalyzer(api);
-    this.buildArtifactAnalyzer = new BuildArtifactAnalyzer(api);
-    this.serviceAnalyzer = new ServiceAnalyzer(api);
-    this.exploitabilityAnalyzer = new ExploitabilityAnalyzer(api, this.persistence);
+    this.iacAnalyzer = new IaCAnalyzer(registry);
+    this.buildArtifactAnalyzer = new BuildArtifactAnalyzer(registry);
+    this.serviceAnalyzer = new ServiceAnalyzer(registry);
+    this.exploitabilityAnalyzer = new ExploitabilityAnalyzer(registry, this.persistence);
   }
 
   /**
@@ -138,8 +138,8 @@ export class ServiceRelationshipsExtractor {
     );
 
     // ── Instantiate analyzers with cloud repository (enables LLM query tools) ──
-    const iacAnalyzerWithRepo = new IaCAnalyzer(this.api, undefined, cloudRepository);
-    const scriptAnalyzer = new ScriptAnalyzer(this.api, undefined, cloudRepository);
+    const iacAnalyzerWithRepo = new IaCAnalyzer(this.registry, cloudRepository);
+    const scriptAnalyzer = new ScriptAnalyzer(this.registry, cloudRepository);
 
     // ── Step 0: IaC Deep Analysis — declarative deployment artifacts ──────
     // Only runs for non-script deployment artifacts (terraform, bicep, ARM, helm, compose).
@@ -357,7 +357,7 @@ export class ServiceRelationshipsExtractor {
         `   [SRE] Step 3 – Build → Service (${buildArtifacts.length} builds, ${services.length} services)…`,
       );
       const rels = await correlateBuildToService(
-        this.api, this.persistence, tenantId, repositoryPath,
+        this.registry.getApi(), this.persistence, tenantId, repositoryPath,
         [...buildArtifactMap.values()], [...serviceMap.values()],
       );
       allRelationships.push(...rels);
@@ -370,7 +370,7 @@ export class ServiceRelationshipsExtractor {
         `   [SRE] Step 4 – Build → Deployment (${buildArtifacts.length} builds, ${deploymentArtifacts.length} deployments)…`,
       );
       const rels = await correlateBuildToDeployment(
-        this.api, this.persistence, tenantId, repositoryPath,
+        this.registry.getApi(), this.persistence, tenantId, repositoryPath,
         [...buildArtifactMap.values()], [...artifactMap.values()],
       );
       allRelationships.push(...rels);
@@ -386,7 +386,7 @@ export class ServiceRelationshipsExtractor {
         `   [SRE] Step 5 – IaC → Cloud Resource (${artifactMap.size} IaC, ${cloudRepository.totalCount} resources)…`,
       );
       const result = await correlateIaCToCloudResources(
-        this.api, this.persistence, tenantId, repositoryPath,
+        this.registry.getApi(), this.persistence, tenantId, repositoryPath,
         [...artifactMap.values()], cloudRepository, deploymentScopes,
       );
       allRelationships.push(...result.relationships);
@@ -400,7 +400,7 @@ export class ServiceRelationshipsExtractor {
         `   [SRE] Step 6 – IaC → Service (${artifactMap.size} IaC, ${services.length} services)…`,
       );
       const rels = await correlateIaCToServices(
-        this.api, this.persistence, tenantId, repositoryPath,
+        this.registry.getApi(), this.persistence, tenantId, repositoryPath,
         [...artifactMap.values()], [...serviceMap.values()],
       );
       allRelationships.push(...rels);
@@ -441,7 +441,7 @@ export class ServiceRelationshipsExtractor {
         `   [SRE] Step 7 – Service → Cloud Resource (${services.length} services)…`,
       );
       const rels = await correlateServicesToCloudResources(
-        this.api, this.persistence, tenantId, repositoryPath,
+        this.registry.getApi(), this.persistence, tenantId, repositoryPath,
         [...serviceMap.values()], cloudRepository,
         allRelationships, [...artifactMap.values()],
         serviceRGAffinity, deploymentScopes,

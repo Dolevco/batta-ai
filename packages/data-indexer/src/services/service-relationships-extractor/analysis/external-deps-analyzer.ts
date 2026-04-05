@@ -4,17 +4,15 @@
  * The ServiceAnalyzer produces a richer ServiceAnalysis that includes
  * all ExternalDep data plus code structure, tech stack, and business value.
  */
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { CodeService, ExternalDep } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { ExternalDepsInput } from '../../../agents/tools/externalDepsCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType } from '../../../agents';
 
 /** @deprecated Use ServiceAnalyzer instead. */
 export class ExternalDepsAnalyzer {
   constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    private readonly registry: DataIndexerAgentRegistry,
   ) {}
 
   async extractExternalDeps(
@@ -22,7 +20,7 @@ export class ExternalDepsAnalyzer {
     repositoryPath: string,
   ): Promise<{ externalDeps: ExternalDep[]; serviceDescription?: string }> {
     const servicePath = (service.metadata?.codePath as string) || service.codePath || '';
-    const task = this.registry.createTask(DataIndexerAgentType.ServiceAnalyzer, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.ServiceAnalyzer, {
       workspace: repositoryPath,
     });
 

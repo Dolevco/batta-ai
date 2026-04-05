@@ -23,10 +23,21 @@
 
 import { Task } from '@ai-agent/core';
 import type { ILLMApiHandler, TaskConfig, Tool } from '@ai-agent/core';
+import { AgentModel } from '@ai-agent/core';
 import type { DataIndexerAgentDefinition } from './types';
 
 export class DataIndexerAgentRegistry {
   private readonly store = new Map<string, DataIndexerAgentDefinition>();
+
+  /**
+   * @param api      - Default (large-model) LLM API handler used for all agents.
+   * @param smallApi - Optional small-model handler. Agents tagged AgentModel.Small
+   *                   use this client; all others use api.
+   */
+  constructor(
+    private readonly api: ILLMApiHandler,
+    private readonly smallApi?: ILLMApiHandler,
+  ) {}
 
   /**
    * Register an agent definition.
@@ -54,6 +65,15 @@ export class DataIndexerAgentRegistry {
   }
 
   /**
+   * Return the default (large-model) LLM API handler.
+   * Used by callers that need a direct ILLMApiHandler reference (e.g. correlators
+   * that do not use the agent/task abstraction).
+   */
+  getApi(): ILLMApiHandler {
+    return this.api;
+  }
+
+  /**
    * Return all registered definitions.
    */
   getAll(): DataIndexerAgentDefinition[] {
@@ -61,7 +81,26 @@ export class DataIndexerAgentRegistry {
   }
 
   /**
+   * Return a new registry with the same clients and all current definitions,
+   * but with the given definition registered (overriding any existing one with
+   * the same agentType). Used to create short-lived registries with cloud-query
+   * tool variants without mutating the shared registry.
+   */
+  withDefinition(definition: DataIndexerAgentDefinition): DataIndexerAgentRegistry {
+    const clone = new DataIndexerAgentRegistry(this.api, this.smallApi);
+    for (const def of this.store.values()) {
+      clone.register(def);
+    }
+    clone.register(definition);
+    return clone;
+  }
+
+  /**
    * Build and return a fully-configured Task for the given agent role.
+   *
+   * The correct LLM client is chosen automatically based on the agent definition's
+   * model field: AgentModel.Small agents use the smallApi passed to the constructor;
+   * all others use the default api.
    *
    * Tool assembly:
    *   1. def.toolsFactory(workspace) — file tools created by the definition
@@ -74,23 +113,22 @@ export class DataIndexerAgentRegistry {
    * via overrides, but customInstructions is never overridden by callers.
    *
    * @param agentType - Registered agent type string (use DataIndexerAgentType).
-   * @param api       - LLM API handler for the Task.
    * @param overrides - Optional partial TaskConfig (workspace, memory, etc.).
    *                    Do NOT pass tools — the definition owns tool creation.
    */
   createTask(
     agentType: string,
-    api: ILLMApiHandler,
     overrides: Omit<Partial<TaskConfig>, 'tools' | 'customInstructions'> = {},
   ): Task {
     const def = this.get(agentType);
+    const effectiveApi = (def.model === AgentModel.Small && this.smallApi) ? this.smallApi : this.api;
     const completionTool: Tool = def.completionToolFactory();
     const defTools: Tool[] = def.toolsFactory
       ? def.toolsFactory(overrides.workspace ?? '')
       : [];
     const tools = [...defTools, completionTool];
 
-    return new Task(api, {
+    return new Task(effectiveApi, {
       ...overrides,
       tools,
       maxIterations: def.maxIterations,

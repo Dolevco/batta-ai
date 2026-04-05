@@ -28,6 +28,7 @@ import { EntityIdUtils } from '../utils/id-generator';
 import { CloudDiscoveryStage, CloudDiscoveryConfig } from '../services/cloud-discovery.stage';
 import { ServiceRelationshipsExtractor } from '../services/service-relationships-extractor/index';
 import { RepositoryResponsibilityCalculator } from '../services/repository-responsibility-calculator';
+import { createDataIndexerRegistry } from '../agents';
 
 // Import stages
 import { CodeDiscoveryStage, type CodeIndexerConfig } from './stages/discovery.stage';
@@ -81,7 +82,8 @@ export class CodeIndexingPipeline implements IndexingPipeline {
     }
     
     // Single pipeline: analysis then correlation, both in the correct order
-    this.serviceRelationshipsExtractor = new ServiceRelationshipsExtractor(config.api, config.neo4j, config.qdrant);
+    const registry = createDataIndexerRegistry(config.api, config.smallApi);
+    this.serviceRelationshipsExtractor = new ServiceRelationshipsExtractor(registry, config.neo4j, config.qdrant);
     this.repositoryResponsibilityCalculator = new RepositoryResponsibilityCalculator(config.api, config.qdrant, config.neo4j);
   }
 

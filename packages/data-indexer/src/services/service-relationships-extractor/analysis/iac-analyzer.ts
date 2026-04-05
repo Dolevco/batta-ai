@@ -1,14 +1,12 @@
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { DeploymentArtifact, IaCAnalysis } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { IaCAnalysisInput } from '../../../agents/tools/iacAnalysisCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry, createIaCAnalyzerAgentWithRepository } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType, createIaCAnalyzerAgentWithRepository } from '../../../agents';
 import type { CloudResourceRepository } from '../../cloud-resource-repository';
 
 export class IaCAnalyzer {
   constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    private readonly registry: DataIndexerAgentRegistry,
     /** Optional cloud repository — when provided, query tools are wired into the agent */
     private readonly cloudRepository?: CloudResourceRepository,
   ) {}
@@ -22,14 +20,13 @@ export class IaCAnalyzer {
     let task;
     if (this.cloudRepository) {
       const def = createIaCAnalyzerAgentWithRepository(this.cloudRepository);
-      // Register temporarily on a local registry to create a task from the factory def
-      const localRegistry = new DataIndexerAgentRegistry();
-      localRegistry.register(def);
-      task = localRegistry.createTask(DataIndexerAgentType.IacAnalyzer, this.api, {
+      // Clone the registry with the cloud-aware definition overriding the default one
+      const localRegistry = this.registry.withDefinition(def);
+      task = localRegistry.createTask(DataIndexerAgentType.IacAnalyzer, {
         workspace: repositoryPath,
       });
     } else {
-      task = this.registry.createTask(DataIndexerAgentType.IacAnalyzer, this.api, {
+      task = this.registry.createTask(DataIndexerAgentType.IacAnalyzer, {
         workspace: repositoryPath,
       });
     }

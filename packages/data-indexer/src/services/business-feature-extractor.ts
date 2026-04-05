@@ -35,7 +35,6 @@
  */
 
 import * as crypto from 'crypto';
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type { CloudResource, CodeService, Relationship, RepositoryBriefing, TenantId } from '@ai-agent/shared';
 import { QdrantAdapter, Neo4jAdapter } from '@ai-agent/shared';
 import type {
@@ -75,19 +74,14 @@ import type { DataFlowInput } from '../agents/tools/dataFlowCompletionTool';
 import type { ThreatModelInput } from '../agents/tools/featureThreatModelCompletionTool';
 import type { ServiceDFDInput } from '../agents/tools/serviceDFDCompletionTool';
 import type { ServiceThreatModelInput } from '../agents/tools/serviceThreatModelCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType } from '../agents';
 
 export class BusinessFeatureExtractor {
-  private readonly registry: DataIndexerAgentRegistry;
-
   constructor(
-    private readonly api: ILLMApiHandler,
+    private readonly registry: DataIndexerAgentRegistry,
     private readonly qdrant?: QdrantAdapter,
     private readonly neo4j?: Neo4jAdapter,
-    registry?: DataIndexerAgentRegistry,
-  ) {
-    this.registry = registry ?? dataIndexerAgentRegistry;
-  }
+  ) {}
 
   /**
    * Run the full 5-step pipeline for a CodeService and return the extracted
@@ -207,7 +201,7 @@ export class BusinessFeatureExtractor {
     skeleton?: ServiceSkeleton,
     surface?: ServiceExternalSurface,
   ): Promise<FeatureDraft[]> {
-    const task = this.registry.createTask(DataIndexerAgentType.FeatureListExtractor, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.FeatureListExtractor, {
       workspace: repositoryPath,
     });
 
@@ -264,7 +258,7 @@ export class BusinessFeatureExtractor {
       ? buildBriefingSection(repositoryBriefing)
       : '';
 
-    const task = this.registry.createTask(DataIndexerAgentType.DfdExtractor, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.DfdExtractor, {
       workspace: repositoryPath,
     });
 
@@ -321,7 +315,7 @@ export class BusinessFeatureExtractor {
       ? buildBriefingSection(repositoryBriefing)
       : '';
 
-    const task = this.registry.createTask(DataIndexerAgentType.FeatureThreatModel, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.FeatureThreatModel, {
       workspace: repositoryPath,
     });
 
@@ -388,7 +382,7 @@ export class BusinessFeatureExtractor {
     );
 
     // Service DFD Synthesis is a pure merge — NO file tools provided.
-    const task = this.registry.createTask(DataIndexerAgentType.ServiceDfdSynthesis, this.api);
+    const task = this.registry.createTask(DataIndexerAgentType.ServiceDfdSynthesis);
 
     // Build the surface checklist (Pass 2 output) to inject as a validation anchor.
     const surfaceChecklist = surface
@@ -530,7 +524,7 @@ export class BusinessFeatureExtractor {
     );
     const cloudSection = cloudContext ? buildCloudContextSection(service, cloudContext) : '';
 
-    const task = this.registry.createTask(DataIndexerAgentType.ServiceThreatModel, this.api);
+    const task = this.registry.createTask(DataIndexerAgentType.ServiceThreatModel);
 
     const prompt =
       `Perform a holistic STRIDE threat model for service "${service.name}".\n\n` +

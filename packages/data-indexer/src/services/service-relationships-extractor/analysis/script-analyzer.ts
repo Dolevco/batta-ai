@@ -16,7 +16,6 @@
  *     fields because ScriptAnalysis itself is secret-free after validation.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type {
   BuildArtifact,
   DeploymentArtifact,
@@ -27,13 +26,12 @@ import type {
 } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { ScriptAnalysisInput } from '../../../agents/tools/scriptAnalysisCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry, createScriptAnalyzerAgentWithRepository } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType, createScriptAnalyzerAgentWithRepository } from '../../../agents';
 import type { CloudResourceRepository } from '../../cloud-resource-repository';
 
 export class ScriptAnalyzer {
   constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    private readonly registry: DataIndexerAgentRegistry,
     /** Optional cloud repository — when provided, query tools are wired into the agent */
     private readonly cloudRepository?: CloudResourceRepository,
   ) {}
@@ -50,13 +48,11 @@ export class ScriptAnalyzer {
     let task;
     if (this.cloudRepository) {
       const def = createScriptAnalyzerAgentWithRepository(this.cloudRepository);
-      const localRegistry = new DataIndexerAgentRegistry();
-      localRegistry.register(def);
-      task = localRegistry.createTask(DataIndexerAgentType.ScriptAnalyzer, this.api, {
+      task = this.registry.withDefinition(def).createTask(DataIndexerAgentType.ScriptAnalyzer, {
         workspace: repositoryPath,
       });
     } else {
-      task = this.registry.createTask(DataIndexerAgentType.ScriptAnalyzer, this.api, {
+      task = this.registry.createTask(DataIndexerAgentType.ScriptAnalyzer, {
         workspace: repositoryPath,
       });
     }

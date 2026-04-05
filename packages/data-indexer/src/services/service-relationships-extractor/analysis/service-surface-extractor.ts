@@ -18,7 +18,6 @@
  *   - Known sibling surfaces injected as context never include secret values.
  */
 
-import type { ILLMApiHandler } from '@ai-agent/core';
 import type {
   CodeService,
   ExternalDep,
@@ -29,12 +28,11 @@ import type {
 } from '@ai-agent/shared';
 import { sanitizeMetadata } from '../../../utils/secret-sanitizer';
 import type { ServiceExternalSurfaceInput } from '../../../agents/tools/serviceExternalSurfaceCompletionTool';
-import { DataIndexerAgentRegistry, DataIndexerAgentType, dataIndexerAgentRegistry } from '../../../agents';
+import { DataIndexerAgentRegistry, DataIndexerAgentType } from '../../../agents';
 
 export class ServiceSurfaceExtractor {
   constructor(
-    private readonly api: ILLMApiHandler,
-    private readonly registry: DataIndexerAgentRegistry = dataIndexerAgentRegistry,
+    private readonly registry: DataIndexerAgentRegistry,
   ) {}
 
   /**
@@ -72,7 +70,7 @@ export class ServiceSurfaceExtractor {
       ? `\nRepository: ${briefing.summary}`
       : '';
 
-    const task = this.registry.createTask(DataIndexerAgentType.ServiceExternalSurface, this.api, {
+    const task = this.registry.createTask(DataIndexerAgentType.ServiceExternalSurface, {
       workspace: repositoryPath,
     });
 
