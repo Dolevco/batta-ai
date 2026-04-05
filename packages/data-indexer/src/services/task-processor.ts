@@ -177,14 +177,26 @@ export class RepositoryTaskProcessor {
       await this.integrationFetcher.initialize();
       const integrations = await this.integrationFetcher.fetchIntegrations(task.tenantId);
 
-      if (!integrations.codeIntegration) {
+      if (!integrations.codeIntegrations.length) {
         throw new Error(`No code integration found for tenant ${task.tenantId}`);
       }
+
+      // Pick the best integration for this specific repository.
+      // Prefer the one whose base URL host matches the repo URL host; fall back to first.
+      const repoHost = (() => {
+        try { return new URL(task.repository.url).hostname; } catch { return ''; }
+      })();
+      const chosenIntegration = integrations.codeIntegrations.find((ci) => {
+        try {
+          const defaultBaseUrl = (ci as any).id === 'gitlab' ? 'https://gitlab.com' : 'https://github.com';
+          return new URL((ci as any).config?.baseUrl ?? defaultBaseUrl).hostname === repoHost;
+        } catch { return false; }
+      }) ?? integrations.codeIntegrations[0];
 
       console.log(`[${task.taskId}] Setting up repository ${task.repository.name}`);
       const repositoryPath = await this.repositorySetup.ensureRepository(
         task.repository,
-        integrations.codeIntegration,
+        chosenIntegration,
       );
       task.repository.clonePath = repositoryPath;
 

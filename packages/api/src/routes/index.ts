@@ -62,7 +62,7 @@ export default async function createRouter(
   // Apply authentication middleware to all routes
   router.use(authMiddleware);
 
-  // Custom integration controller backed by persistence
+  // Custom integration management routes
   const customIntegrationRepo = createCustomIntegrationRepository();
   const customIntegrationController = new CustomIntegrationController(customIntegrationRepo);
 
@@ -75,7 +75,7 @@ export default async function createRouter(
   // Integrations controller that aggregates all integration types
   const integrationsController = new IntegrationsController(
     mcpIntegrationController,
-    customIntegrationController
+    customIntegrationController,
   );
 
   // Asset controller for knowledge base (reuses QdrantDataAdapter)
@@ -164,12 +164,13 @@ export default async function createRouter(
   // Unified integrations endpoint delegated to controller
   router.get('/integrations', integrationsController.getAllIntegrations.bind(integrationsController));
 
-  // Custom integration management routes
-  router.post('/integrations/custom', customIntegrationController.createIntegration.bind(customIntegrationController));
-  router.get('/integrations/custom/:id', customIntegrationController.getIntegration.bind(customIntegrationController));
-  router.get('/integrations/custom', customIntegrationController.getAllIntegrations.bind(customIntegrationController));
-  router.put('/integrations/custom/:id', customIntegrationController.updateIntegration.bind(customIntegrationController));
-  router.delete('/integrations/custom/:id', customIntegrationController.deleteIntegration.bind(customIntegrationController));
+  // Custom + Code integration management routes
+  // :type is either "custom" or "code" — the controller reads it to scope queries/writes.
+  router.post('/integrations/:type', customIntegrationController.createIntegration.bind(customIntegrationController));
+  router.get('/integrations/:type/:id', customIntegrationController.getIntegration.bind(customIntegrationController));
+  router.get('/integrations/:type', customIntegrationController.getAllIntegrations.bind(customIntegrationController));
+  router.put('/integrations/:type/:id', customIntegrationController.updateIntegration.bind(customIntegrationController));
+  router.delete('/integrations/:type/:id', customIntegrationController.deleteIntegration.bind(customIntegrationController));
 
   // Slack OAuth routes
   router.post('/oauth/slack/complete', slackOAuthController.complete.bind(slackOAuthController));

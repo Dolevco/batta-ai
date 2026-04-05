@@ -8,7 +8,8 @@ import { execSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { RepositoryHandle } from '../types/pipeline.types';
-import type { GitHubIntegration } from '@ai-agent/shared';
+import type { CodeIntegrationHandler } from '@ai-agent/shared';
+import { GitLabIntegration } from '@ai-agent/shared';
 
 export interface RepositorySetupConfig {
   cloneDir: string;
@@ -30,7 +31,7 @@ export class RepositorySetup {
    */
   async ensureRepository(
     repository: RepositoryHandle,
-    integration: GitHubIntegration
+    integration: CodeIntegrationHandler
   ): Promise<string> {
     // If already has clone path and exists, use it
     if (repository.clonePath && existsSync(repository.clonePath)) {
@@ -55,11 +56,11 @@ export class RepositorySetup {
   }
 
   /**
-   * Clone a repository
+   * Clone a repository using the appropriate authentication scheme for the provider.
    */
   private async cloneRepository(
     repository: RepositoryHandle,
-    integration: GitHubIntegration,
+    integration: CodeIntegrationHandler,
     targetPath: string
   ): Promise<void> {
     // Ensure parent directory exists
@@ -68,12 +69,19 @@ export class RepositorySetup {
       mkdirSync(parentDir, { recursive: true });
     }
 
-    // Get access token
+    // Build an authenticated clone URL appropriate for the provider.
     const token = await integration.getAccessToken();
-
-    // Build clone URL with token
     const url = repository.url;
-    const authenticatedUrl = url.replace('https://', `https://x-access-token:${token}@`);
+
+    let authenticatedUrl: string;
+
+    if (integration instanceof GitLabIntegration) {
+      // GitLab uses oauth2 basic-auth user with the token
+      authenticatedUrl = integration.buildCloneUrl(url);
+    } else {
+      // GitHub (and any other provider) uses x-access-token basic-auth scheme
+      authenticatedUrl = url.replace('https://', `https://x-access-token:${token}@`);
+    }
 
     try {
       // Clone with depth 1 for faster cloning

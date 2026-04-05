@@ -10,7 +10,7 @@
  * 5. Persistence - Project to downstream stores
  */
 
-import { GitHubIntegration } from '@ai-agent/shared';
+import type { CodeIntegrationHandler } from '@ai-agent/shared';
 import {
   IndexingPipeline,
   IndexingOptions,
@@ -45,7 +45,7 @@ export type { CodeIndexerConfig };
  */
 export class CodeIndexingPipeline implements IndexingPipeline {
   private tenantId: TenantId;
-  private integration: GitHubIntegration;
+  private integrations: CodeIntegrationHandler[];
   private config: CodeIndexerConfig;
   private idUtils: EntityIdUtils;
   
@@ -58,14 +58,20 @@ export class CodeIndexingPipeline implements IndexingPipeline {
   private serviceRelationshipsExtractor: ServiceRelationshipsExtractor;
   private repositoryResponsibilityCalculator: RepositoryResponsibilityCalculator;
 
-  constructor(tenantId: TenantId, integration: GitHubIntegration, config: CodeIndexerConfig) {
+  constructor(
+    tenantId: TenantId,
+    integrationOrIntegrations: CodeIntegrationHandler | CodeIntegrationHandler[],
+    config: CodeIndexerConfig,
+  ) {
     this.tenantId = tenantId;
-    this.integration = integration;
+    this.integrations = Array.isArray(integrationOrIntegrations)
+      ? integrationOrIntegrations
+      : [integrationOrIntegrations];
     this.config = config;
     this.idUtils = new EntityIdUtils();
     
     // Initialize stages
-    this.discoveryStage = new CodeDiscoveryStage(integration, config);
+    this.discoveryStage = new CodeDiscoveryStage(this.integrations, config);
     this.extractionStage = new CodeExtractionStage(config);
     this.transformationStage = new CodeTransformationStage(tenantId, this.idUtils);
     

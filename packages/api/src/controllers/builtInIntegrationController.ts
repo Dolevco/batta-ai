@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { BuiltInIntegration } from '../types';
-import { MicrosoftDefenderIntegration, SlackIntegration, GitHubIntegration, ICustomIntegrationRepository, DefenderConfig, SlackConfig, GitHubConfig } from '@ai-agent/shared';
+import { MicrosoftDefenderIntegration, SlackIntegration, GitHubIntegration, GitLabIntegration, ICustomIntegrationRepository, DefenderConfig, SlackConfig, GitHubConfig, GitLabConfig } from '@ai-agent/shared';
 import { v4 as uuidv4 } from 'uuid';
 
 export class BuiltInIntegrationController {
@@ -118,6 +118,49 @@ export class BuiltInIntegrationController {
           authorizeUrl: `https://github.com/apps/${encodeURIComponent(process.env.GITHUB_APP_SLUG!)}/installations/new?redirect_uri=${encodeURIComponent(process.env.GITHUB_REDIRECT_URI!)}`,
         },
       },
+      {
+        id: 'gitlab',
+        name: 'GitLab',
+        description: 'Access GitLab groups and repositories, manage merge requests and issues',
+        category: 'development',
+        uiCategory: 'development',
+        type: 'code',
+        config: {
+          groupAccessToken: '',
+          groupId: '',
+          baseUrl: 'https://gitlab.com',
+        },
+        configSchema: [
+          {
+            key: 'groupAccessToken',
+            displayName: 'Group Access Token',
+            description: 'A GitLab Group Access Token with api and read_repository scopes.',
+            placeholder: 'glpat-xxxxxxxxxxxxxxxxxxxx',
+            required: true,
+            secret: true,
+            type: 'password',
+          },
+          {
+            key: 'groupId',
+            displayName: 'Group ID or Path (optional)',
+            description: 'Namespace/path of the group to scope repository discovery (e.g. my-org). Leave blank to use all groups accessible to the token.',
+            placeholder: 'my-org',
+            required: false,
+            secret: false,
+            type: 'string',
+          },
+          {
+            key: 'baseUrl',
+            displayName: 'GitLab Base URL (optional)',
+            description: 'For self-hosted GitLab instances. Leave blank for gitlab.com.',
+            placeholder: 'https://gitlab.example.com',
+            required: false,
+            secret: false,
+            type: 'string',
+          },
+        ],
+        // No oauth block — token is entered directly in the form
+      },
     ];
 
     res.json(integrations);
@@ -203,6 +246,55 @@ export class BuiltInIntegrationController {
         } as GitHubConfig;
 
         const result = await GitHubIntegration.validate(githubConfig);
+        res.json(result);
+      } catch (err: any) {
+        res.status(500).json({ valid: false, error: err?.message ?? String(err) });
+      }
+
+      return;
+    }
+
+    if (integrationId === 'gitlab') {
+      try {
+        const { tenantId } = (req as any).auth || {};
+
+        if (!tenantId) {
+          res.status(401).json({ valid: false, error: 'Unauthorized' });
+          return;
+        }
+
+        // Fetch all custom integrations and find the GitLab entry
+        const customIntegrations = await this.customIntegrationRepository.getAll(tenantId, false);
+        const gitlabEntry = customIntegrations.find((ci) => ci.name === 'GitLab');
+
+        if (!gitlabEntry) {
+          // If no stored entry yet, validate using config provided in request body
+          const { config } = req.body;
+          if (!config?.groupAccessToken) {
+            res.status(404).json({ valid: false, error: 'GitLab integration not configured yet.' });
+            return;
+          }
+
+          const result = await GitLabIntegration.validate({
+            tenantId,
+            groupAccessToken: config.groupAccessToken,
+            groupId: config.groupId,
+            baseUrl: config.baseUrl,
+          } as GitLabConfig);
+          res.json(result);
+          return;
+        }
+
+        const storedConfig = gitlabEntry.config || {};
+
+        const gitlabConfig: GitLabConfig = {
+          tenantId,
+          groupAccessToken: storedConfig.groupAccessToken,
+          groupId: storedConfig.groupId,
+          baseUrl: storedConfig.baseUrl,
+        };
+
+        const result = await GitLabIntegration.validate(gitlabConfig);
         res.json(result);
       } catch (err: any) {
         res.status(500).json({ valid: false, error: err?.message ?? String(err) });

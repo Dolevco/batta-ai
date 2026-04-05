@@ -69,7 +69,7 @@ export class ScanController {
                 typeof r === 'string' &&
                 r.length > 0 &&
                 r.length <= 200 &&
-                !/[/\\<>&"'`]/.test(r)
+                !/[\\<>&"'`]/.test(r)
             )
             .slice(0, 200) // hard cap to prevent abuse
         : undefined;

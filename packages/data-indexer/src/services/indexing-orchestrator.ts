@@ -5,7 +5,7 @@
  * indexing tasks to a Redis queue for distributed processing
  */
 
-import { GitHubIntegration } from '@ai-agent/shared';
+import type { CodeIntegrationHandler } from '@ai-agent/shared';
 import { TenantId } from '@ai-agent/shared';
 import { DiscoveryScope } from '../types/pipeline.types';
 import { IndexRepositoryTask, TaskType } from '../types/queue.types';
@@ -33,7 +33,7 @@ export interface OrchestrationOptions {
  */
 export class CodeIndexingOrchestrator {
   private tenantId: TenantId;
-  private integration?: GitHubIntegration;
+  private integrations: CodeIntegrationHandler[];
   private config: CodeIndexerConfig;
   private discoveryStage?: CodeDiscoveryStage;
   private queueManager: QueueManager;
@@ -43,16 +43,18 @@ export class CodeIndexingOrchestrator {
     tenantId: TenantId,
     queueManager: QueueManager,
     config?: CodeIndexerConfig,
-    integration?: GitHubIntegration,
+    integration?: CodeIntegrationHandler | CodeIntegrationHandler[],
   ) {
     this.tenantId = tenantId;
-    this.integration = integration;
+    this.integrations = integration
+      ? Array.isArray(integration) ? integration : [integration]
+      : [];
     this.config = config || {} as CodeIndexerConfig;
     this.queueManager = queueManager;
     this.integrationFetcher = new IntegrationFetcher();
     
-    if (integration) {
-      this.discoveryStage = new CodeDiscoveryStage(integration, this.config);
+    if (this.integrations.length) {
+      this.discoveryStage = new CodeDiscoveryStage(this.integrations, this.config);
     }
   }
 
@@ -70,18 +72,18 @@ export class CodeIndexingOrchestrator {
     console.log(`[${runId}] Starting orchestration for tenant ${this.tenantId}`);
 
     try {
-      // Fetch integration if not provided
-      if (!this.integration) {
-        console.log(`[${runId}] Fetching code integration for tenant ${this.tenantId}`);
+      // Fetch integrations if not provided
+      if (!this.integrations.length) {
+        console.log(`[${runId}] Fetching code integrations for tenant ${this.tenantId}`);
         await this.integrationFetcher.initialize();
-        const integrations = await this.integrationFetcher.fetchIntegrations(this.tenantId);
+        const fetched = await this.integrationFetcher.fetchIntegrations(this.tenantId);
         
-        if (!integrations.codeIntegration) {
+        if (!fetched.codeIntegrations.length) {
           throw new Error(`No code integration found for tenant ${this.tenantId}`);
         }
         
-        this.integration = integrations.codeIntegration;
-        this.discoveryStage = new CodeDiscoveryStage(this.integration, this.config);
+        this.integrations = fetched.codeIntegrations;
+        this.discoveryStage = new CodeDiscoveryStage(this.integrations, this.config);
       }
 
       // Stage 1: Discovery

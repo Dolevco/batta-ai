@@ -3,6 +3,19 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ICustomIntegrationRepository } from '@ai-agent/shared';
 import type { CustomIntegration, CreateCustomIntegrationRequest, UpdateCustomIntegrationRequest } from '../types';
 
+/** Integration types managed by this controller. */
+type IntegrationType = 'custom' | 'code';
+
+/**
+ * Resolve the integration type from the route segment.
+ * Routes are mounted as /integrations/:type so req.params.type is either
+ * "custom" or "code". Falls back to "custom" for safety.
+ */
+function resolveType(req: Request): IntegrationType {
+  const t = req.params.type;
+  return t === 'code' ? 'code' : 'custom';
+}
+
 export class CustomIntegrationController {
   private repository: ICustomIntegrationRepository;
 
@@ -12,15 +25,21 @@ export class CustomIntegrationController {
 
   async createIntegration(req: Request, res: Response): Promise<void> {
     try {
+      const type = resolveType(req);
       const request: CreateCustomIntegrationRequest = req.body;
       const tenantId = req.auth!.tenantId;
 
+      const config: Record<string, string> = {};
+      for (const [k, v] of Object.entries(request.config ?? {})) {
+        if (v !== undefined && v !== null) config[k] = String(v);
+      }
+
       const integration: CustomIntegration = {
         id: uuidv4(),
-        type: 'custom',
+        type,
         name: request.name,
         description: request.description,
-        config: request.config,
+        config,
         enabled: request.enabled ?? true,
         tenantId,
         createdAt: new Date().toISOString(),
@@ -30,8 +49,8 @@ export class CustomIntegrationController {
       const created = await this.repository.create(integration);
       res.status(201).json(created);
     } catch (error) {
-      console.error('Error creating custom integration:', error);
-      res.status(500).json({ error: 'Failed to create custom integration' });
+      console.error('Error creating integration:', error);
+      res.status(500).json({ error: 'Failed to create integration' });
     }
   }
 
@@ -39,35 +58,32 @@ export class CustomIntegrationController {
     try {
       const { id } = req.params;
       const tenantId = req.auth!.tenantId;
+      // No type filter on single-record lookups — UUIDs are globally unique
       const integration = await this.repository.getById(id, tenantId);
 
       if (!integration) {
-        res.status(404).json({ error: 'Custom integration not found' });
+        res.status(404).json({ error: 'Integration not found' });
         return;
       }
 
       res.json(integration);
     } catch (error) {
-      console.error('Error getting custom integration:', error);
-      res.status(500).json({ error: 'Failed to get custom integration' });
+      console.error('Error getting integration:', error);
+      res.status(500).json({ error: 'Failed to get integration' });
     }
   }
 
   async getAllIntegrations(req: Request, res: Response): Promise<void> {
     try {
+      const type = resolveType(req);
       const tenantId = req.auth!.tenantId;
       const enabledOnly = req.query.enabled === 'true';
-      const integrations = await this.repository.getAll(tenantId, enabledOnly);
-      res.json(integrations);
+      const all = await this.repository.getAll(tenantId, enabledOnly);
+      res.json(all.filter((i) => i.type === type));
     } catch (error) {
-      console.error('Error getting custom integrations:', error);
-      res.status(500).json({ error: 'Failed to get custom integrations' });
+      console.error('Error getting integrations:', error);
+      res.status(500).json({ error: 'Failed to get integrations' });
     }
-  }
-
-  // Public method for internal use
-  async fetchAll(tenantId: string, enabledOnly: boolean = false) {
-    return this.repository.getAll(tenantId, enabledOnly);
   }
 
   async updateIntegration(req: Request, res: Response): Promise<void> {
@@ -76,20 +92,18 @@ export class CustomIntegrationController {
       const tenantId = req.auth!.tenantId;
       const request: UpdateCustomIntegrationRequest = req.body;
 
+      // No type filter on single-record lookups — UUIDs are globally unique
       const existing = await this.repository.getById(id, tenantId);
       if (!existing) {
-        res.status(404).json({ error: 'Custom integration not found' });
+        res.status(404).json({ error: 'Integration not found' });
         return;
       }
 
-      // Merge config safely, removing any undefined values so the result is Record<string,string>
-      let mergedConfig: Record<string, string> | undefined = undefined;
+      let mergedConfig: Record<string, string> | undefined;
       if (request.config) {
         mergedConfig = { ...existing.config };
         for (const [k, v] of Object.entries(request.config)) {
-          if (v !== undefined && v !== null) {
-            mergedConfig[k] = String(v);
-          }
+          if (v !== undefined && v !== null) mergedConfig[k] = String(v);
         }
       }
 
@@ -104,8 +118,8 @@ export class CustomIntegrationController {
       const updated = await this.repository.update(id, updates);
       res.json(updated);
     } catch (error) {
-      console.error('Error updating custom integration:', error);
-      res.status(500).json({ error: 'Failed to update custom integration' });
+      console.error('Error updating integration:', error);
+      res.status(500).json({ error: 'Failed to update integration' });
     }
   }
 
@@ -113,17 +127,30 @@ export class CustomIntegrationController {
     try {
       const { id } = req.params;
       const tenantId = req.auth!.tenantId;
-      const success = await this.repository.delete(id, tenantId);
 
-      if (!success) {
-        res.status(404).json({ error: 'Custom integration not found' });
+      // No type filter on single-record lookups — UUIDs are globally unique
+      const existing = await this.repository.getById(id, tenantId);
+      if (!existing) {
+        res.status(404).json({ error: 'Integration not found' });
         return;
       }
 
+      await this.repository.delete(id, tenantId);
       res.status(204).send();
     } catch (error) {
-      console.error('Error deleting custom integration:', error);
-      res.status(500).json({ error: 'Failed to delete custom integration' });
+      console.error('Error deleting integration:', error);
+      res.status(500).json({ error: 'Failed to delete integration' });
     }
+  }
+
+  /** Internal: fetch all integrations for a tenant (all types). */
+  async fetchAll(tenantId: string, enabledOnly = false) {
+    return this.repository.getAll(tenantId, enabledOnly);
+  }
+
+  /** Internal: fetch only code-type integrations for a tenant. */
+  async fetchAllCode(tenantId: string, enabledOnly = false) {
+    const all = await this.repository.getAll(tenantId, enabledOnly);
+    return all.filter((i) => i.type === 'code');
   }
 }

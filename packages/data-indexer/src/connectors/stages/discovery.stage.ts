@@ -4,7 +4,7 @@
  * Finds repositories and artifacts from various sources (GitHub, local paths)
  */
 
-import { GitHubIntegration } from '@ai-agent/shared';
+import type { CodeIntegrationHandler } from '@ai-agent/shared';
 import simpleGit, { SimpleGit } from 'simple-git';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -38,36 +38,47 @@ export interface CodeIndexerConfig {
  * Code Discovery Stage
  */
 export class CodeDiscoveryStage implements DiscoveryStage {
-  private integration: GitHubIntegration;
+  private integrations: CodeIntegrationHandler[];
   private config: CodeIndexerConfig;
   private git: SimpleGit;
 
-  constructor(integration: GitHubIntegration, config: CodeIndexerConfig) {
-    this.integration = integration;
+  /**
+   * @param integrationOrIntegrations - A single integration (backwards compat) or an array.
+   */
+  constructor(integrationOrIntegrations: CodeIntegrationHandler | CodeIntegrationHandler[], config: CodeIndexerConfig) {
+    this.integrations = Array.isArray(integrationOrIntegrations)
+      ? integrationOrIntegrations
+      : [integrationOrIntegrations];
     this.config = config;
     this.git = simpleGit();
   }
 
   async discover(tenantId: TenantId, scope: DiscoveryScope): Promise<DiscoveryOutput> {
     const repositories: RepositoryHandle[] = [];
+    // Track URLs already added to avoid duplicates when the same repo appears in multiple integrations
+    const seenUrls = new Set<string>();
 
-    // GitHub repositories
-    try {
-      const githubRepos = await this.integration.getRepositories();
-      for (const repo of githubRepos) {
-        if (!!scope.repositories?.length && !scope.repositories.includes(repo.name)) {
-          continue;
+    // Query all configured code integrations
+    for (const integration of this.integrations) {
+      try {
+        const remoteRepos = await integration.getRepositories();
+        for (const repo of remoteRepos) {
+          if (!!scope.repositories?.length && !scope.repositories.includes(repo.name)) {
+            continue;
+          }
+          if (seenUrls.has(repo.url)) continue;
+          seenUrls.add(repo.url);
+
+          repositories.push({
+            name: repo.name,
+            url: repo.url,
+            defaultBranch: repo.defaultBranch || 'main',
+            lastCommitSha: '', // Will be fetched during clone
+          });
         }
-        
-        repositories.push({
-          name: repo.name,
-          url: repo.url,
-          defaultBranch: repo.defaultBranch || 'main',
-          lastCommitSha: '', // Will be fetched during clone
-        });
+      } catch (error: any) {
+        console.error(`[Discovery] Failed to fetch repositories from ${integration.name}:`, error);
       }
-    } catch (error: any) {
-      console.error('Failed to fetch GitHub repositories:', error);
     }
 
     // Local repositories

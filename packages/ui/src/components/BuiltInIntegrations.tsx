@@ -8,6 +8,7 @@ import { useTheme } from '../hooks/useTheme';
 import MicrosoftIcon from './icons/Microsoft';
 import SlackIcon from './icons/Slack';
 import GitHubIcon from './icons/GitHub';
+import GitLabIcon from './icons/GitLab';
 
 // ── Build theme tokens based on dark/light mode ────────────────────────────────
 function makeTokens(isDark: boolean) {
@@ -377,6 +378,7 @@ export function BuiltInIntegrations({ activeCategory }: { activeCategory: BuiltI
     if (lower.includes('microsoft')) return <MicrosoftIcon />;
     if (lower.includes('slack')) return <SlackIcon />;
     if (lower.includes('github')) return <GitHubIcon />;
+    if (lower.includes('gitlab')) return <GitLabIcon />;
     return <ApiOutlined />;
   };
 

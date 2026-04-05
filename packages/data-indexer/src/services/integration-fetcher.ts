@@ -5,9 +5,10 @@
  * based on tenant ID
  */
 
-import { GitHubIntegration, MicrosoftDefenderIntegration } from '@ai-agent/shared';
+import { GitHubIntegration, GitLabIntegration, MicrosoftDefenderIntegration } from '@ai-agent/shared';
 import { QdrantCustomIntegrationRepository } from '@ai-agent/shared';
 import type { CustomIntegration } from '@ai-agent/shared';
+import type { CodeIntegrationHandler } from '@ai-agent/shared';
 
 export interface IntegrationFetcherConfig {
   qdrantUrl?: string;
@@ -15,7 +16,13 @@ export interface IntegrationFetcherConfig {
 }
 
 export interface FetchedIntegrations {
-  codeIntegration?: GitHubIntegration;
+  /** All configured code integrations (GitHub, GitLab, …). May be empty. */
+  codeIntegrations: CodeIntegrationHandler[];
+  /**
+   * @deprecated Use `codeIntegrations[0]` instead.
+   * Kept for backwards-compat; returns the first code integration or undefined.
+   */
+  codeIntegration?: CodeIntegrationHandler;
   cloudIntegration?: MicrosoftDefenderIntegration;
 }
 
@@ -43,8 +50,7 @@ export class IntegrationFetcher {
    * Fetch integrations for a tenant
    */
   async fetchIntegrations(tenantId: string): Promise<FetchedIntegrations> {
-    const result: FetchedIntegrations = {};
-    
+    const codeIntegrations: CodeIntegrationHandler[] = [];
 
     // Fetch all custom integrations
     const customIntegrations = await this.customRepo.getAll(tenantId, true);
@@ -55,7 +61,16 @@ export class IntegrationFetcher {
     );
     
     if (githubIntegration) {
-      result.codeIntegration = this.createGitHubIntegration(tenantId, githubIntegration);
+      codeIntegrations.push(this.createGitHubIntegration(tenantId, githubIntegration));
+    }
+
+    // Find GitLab integration (type: 'code', name contains 'gitlab')
+    const gitlabIntegration = customIntegrations.find(i =>
+      i.type === 'code' && i.name?.toLowerCase().includes('gitlab')
+    );
+
+    if (gitlabIntegration) {
+      codeIntegrations.push(this.createGitLabIntegration(tenantId, gitlabIntegration));
     }
 
     // Find Microsoft Defender integration
@@ -64,6 +79,12 @@ export class IntegrationFetcher {
       i.name?.toLowerCase().includes('microsoft') ||
       (i.config.clientId && i.config.clientSecret)
     );
+
+    const result: FetchedIntegrations = {
+      codeIntegrations,
+      // backwards-compat alias
+      codeIntegration: codeIntegrations[0],
+    };
 
     if (defenderIntegration) {
       result.cloudIntegration = this.createDefenderIntegration(defenderIntegration);
@@ -86,6 +107,24 @@ export class IntegrationFetcher {
     return new GitHubIntegration({
       tenantId,
       installationId: installationId.toString(),
+    });
+  }
+
+  /**
+   * Create GitLab integration from custom integration config
+   */
+  private createGitLabIntegration(tenantId: string, integration: CustomIntegration): GitLabIntegration {
+    const { groupAccessToken, groupId, baseUrl } = integration.config;
+
+    if (!groupAccessToken) {
+      throw new Error(`GitLab integration ${integration.id} missing groupAccessToken in config`);
+    }
+
+    return new GitLabIntegration({
+      tenantId,
+      groupAccessToken,
+      groupId: groupId || undefined,
+      baseUrl: baseUrl || undefined,
     });
   }
 

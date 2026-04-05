@@ -28,6 +28,7 @@ import type { ICustomIntegrationRepository } from '../persistence/interfaces';
 import { MicrosoftDefenderIntegration } from '../integrations/microsoftDefenderIntegration';
 import { SlackIntegration, type SlackConfig } from '../integrations/slackIntegration';
 import { GitHubIntegration, type GitHubConfig } from '../integrations/githubIntegration';
+import { GitLabIntegration, type GitLabConfig } from '../integrations/gitlabIntegration';
 import { RedisEventPublisher } from '../events';
 
 export interface PlannedTaskConfig {
@@ -391,6 +392,20 @@ async function loadCustomIntegrationTools(
             const github = new GitHubIntegration(githubConfig);
             handlerTools = github.getTools();
             codeHandlers.push(github);
+            break;
+          }
+          case 'GitLab': {
+            // GitLab Group Access Token integration
+            const cfg = integration.config as Record<string,string>;
+            const gitlabConfig: GitLabConfig = {
+              tenantId: cfg.tenantId || tenantId,
+              groupAccessToken: cfg.groupAccessToken || '',
+              groupId: cfg.groupId || undefined,
+              baseUrl: cfg.baseUrl || undefined,
+            };
+            const gitlab = new GitLabIntegration(gitlabConfig);
+            handlerTools = gitlab.getTools();
+            codeHandlers.push(gitlab);
             break;
           }
           // unknown custom integrations are currently ignored (could be extended to dynamic loaders)

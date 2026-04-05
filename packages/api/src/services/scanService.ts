@@ -162,9 +162,9 @@ export async function discoverRepositories(
     await fetcher.initialize();
     const integrations = await fetcher.fetchIntegrations(tenantId);
 
-    if (!integrations.codeIntegration) return [];
+    if (!integrations.codeIntegrations.length) return [];
 
-    const discoveryStage = new CodeDiscoveryStage(integrations.codeIntegration, {} as any);
+    const discoveryStage = new CodeDiscoveryStage(integrations.codeIntegrations, {} as any);
     const result = await discoveryStage.discover(tenantId, {});
 
     return result.repositories.map((r: any) => ({
@@ -318,7 +318,7 @@ async function runOrchestrationStream(
     await fetcher.initialize();
     const integrations = await fetcher.fetchIntegrations(tenantId);
 
-    if (!integrations.codeIntegration) {
+    if (!integrations.codeIntegrations.length) {
       throw new Error('No code integration found');
     }
 
@@ -326,7 +326,7 @@ async function runOrchestrationStream(
       repositories: options.repositories?.length ? options.repositories : undefined,
     };
 
-    const discoveryStage = new CodeDiscoveryStage(integrations.codeIntegration, {} as any);
+    const discoveryStage = new CodeDiscoveryStage(integrations.codeIntegrations, {} as any);
     const discovery = await discoveryStage.discover(tenantId, scope);
 
     rec.repositoriesDiscovered = discovery.repositories.length;
@@ -595,12 +595,12 @@ async function runDirectIndexing(
     await fetcher.initialize();
     const integrations = await fetcher.fetchIntegrations(tenantId);
 
-    if (!integrations.codeIntegration) {
+    if (!integrations.codeIntegrations.length) {
       throw new Error('No code integration found');
     }
 
     updateStage(rec, 'Code Discovery', 'running');
-    const discoveryStage = new CodeDiscoveryStage(integrations.codeIntegration, {} as any);
+    const discoveryStage = new CodeDiscoveryStage(integrations.codeIntegrations, {} as any);
     const discovery = await discoveryStage.discover(tenantId, {});
 
     rec.repositoriesDiscovered = discovery.repositories.length;
