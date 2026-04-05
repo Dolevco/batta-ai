@@ -4,7 +4,6 @@ import { ILLMApiHandler, IEmbeddingHandler, CompletionResponse } from '../api';
 import { ToolRegistry, Tool, ToolResult, ToolUse, ToolParseUtils, ToolResultPager, DataAccessTool, DataAccessToolName } from '../tools';
 import { ShortTermMemory, LongTermMemoryManager } from '../context/memory';
 import { TaskCompletionCategory, TaskCompletionTool } from '../tools/task/taskCompletionTool';
-import { TodoTool, TodoReadTool, TodoStore } from '../tools/task';
 import { extractToolsDescriptions, getFullSystemPrompt } from '../context/prompts/system';
 import { MODES } from '../context/prompts/modes';
 import { AgentTool, AgentToolName, FORK_BOILERPLATE_TAG } from '../tools/delegation/agentTool';

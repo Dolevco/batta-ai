@@ -10,7 +10,6 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   HomeOutlined,
-  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
@@ -31,7 +30,6 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'knowledge-base:security-reviews', icon: <SafetyOutlined />,      label: 'Security Reviews' },
   { key: 'knowledge-base:policies',        icon: <FileProtectOutlined />,  label: 'Policies'         },
   { key: 'agents:chat',     icon: <CommentOutlined />,     label: 'Chat'        },
-  { key: 'agents:tasks',   icon: <ThunderboltOutlined />, label: 'Tasks'       },
   /*{ key: 'planner', icon: <ProjectOutlined />, label: 'Planner' },
   {
     key: 'agents', icon: <UserOutlined />, label: 'Agents',

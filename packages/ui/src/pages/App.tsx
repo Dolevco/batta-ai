@@ -17,6 +17,7 @@ import { PolicyEditorPage } from './PolicyEditorPage';
 import { OAuthCallbackPage } from './OAuthCallbackPage';
 import { ChatPage } from './ChatPage';
 import { LoginPage } from './LoginPage';
+import { LandingPage } from './LandingPage';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
 export function App() {
@@ -36,12 +37,12 @@ export function App() {
     if (location.pathname.startsWith('/knowledge-base/assets')) return 'knowledge-base:assets';
     if (location.pathname.startsWith('/integrations')) return 'integrations';
     if (location.pathname.startsWith('/planner')) return 'planner';
-    if (location.pathname === '/') return 'overview';
+    if (location.pathname === '/overview') return 'overview';
     return 'overview';
   };
 
   const handleMenuSelect = ({ key }: any) => {
-    if (key === 'overview') navigate('/');
+    if (key === 'overview') navigate('/overview');
     else if (key === 'planner') navigate('/planner');
     else if (key === 'integrations') navigate('/integrations');
     else if (key === 'agents:settings') navigate('/agents');
@@ -57,7 +58,8 @@ export function App() {
   return (
     <>
       <Routes>
-        {/* Login route - no layout */}
+        {/* Public routes - no layout */}
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         
         {/* Protected application routes */}
@@ -65,7 +67,8 @@ export function App() {
           <ProtectedRoute>
             <MainLayout selectedMenu={getSelectedMenu()} onSelect={handleMenuSelect}>
               <Routes>
-                <Route path="/" element={<OverviewPage />} />
+                <Route path="/overview" element={<OverviewPage />} />
+                <Route path="/" element={<Navigate to="/overview" replace />} />
                 <Route path="/oauth/:provider/callback" element={<OAuthCallbackPage />} />
                 <Route path="/planner/:taskId" element={<PlannerTaskPage />} />
 

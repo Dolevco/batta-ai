@@ -18,7 +18,7 @@ export function LoginPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/', { replace: true });
+      navigate('/overview', { replace: true });
     }
   }, [isAuthenticated, navigate]);
 
@@ -94,7 +94,7 @@ export function LoginPage() {
       } else if (data.accessToken) {
         // Direct token (e.g., magic link flow)
         localStorage.setItem('access_token', data.accessToken);
-        navigate('/', { replace: true });
+        navigate('/overview', { replace: true });
       } else {
         throw new Error('Invalid response from server');
       }
