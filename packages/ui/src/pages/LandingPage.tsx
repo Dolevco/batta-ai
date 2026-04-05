@@ -87,13 +87,26 @@ export function LandingPage() {
           margin-top: -5vh;
         }
 
-        .landing-subtitle {
+        .landing-top-banner {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          z-index: 10;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px 24px;
+          opacity: 0;
+          animation: landing-fade-down 1s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
+        }
+
+        .landing-top-banner span {
           font-size: clamp(14px, 2vw, 20px);
           font-weight: 400;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.08em;
           color: #ffffff;
-          opacity: 0;
-          animation: landing-rise 1s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
+          text-shadow: 0 1px 12px rgba(0, 0, 0, 0.08);
         }
 
         .landing-title {
@@ -299,6 +312,11 @@ export function LandingPage() {
           to   { opacity: 1; transform: translateY(0); }
         }
 
+        @keyframes landing-fade-down {
+          from { opacity: 0; transform: translateY(-12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+
         @media (max-width: 480px) {
           .landing-content { margin-top: -8vh; }
           .landing-cta-btn { font-size: 13px; padding: 12px 26px; }
@@ -312,10 +330,13 @@ export function LandingPage() {
           <img src="/images/batta3.jpeg" alt="Serene landscape with mountains, river, and ducks" />
         </div>
 
+        <div className="landing-top-banner">
+          <span>Coming soon...</span>
+        </div>
+
         <div className="landing-content">
-          <span className="landing-subtitle">Coming soon...</span>
           <h1 className="landing-title">Batta</h1>
-          <p className="landing-tagline">Calm at any speed.</p>
+          <p className="landing-tagline">The trust to run faster.</p>
           <div className="landing-cta">
             <button
               className={`landing-cta-btn${submitted ? ' done' : ''}`}

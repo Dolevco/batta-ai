@@ -68,7 +68,6 @@ export function App() {
             <MainLayout selectedMenu={getSelectedMenu()} onSelect={handleMenuSelect}>
               <Routes>
                 <Route path="/overview" element={<OverviewPage />} />
-                <Route path="/" element={<Navigate to="/overview" replace />} />
                 <Route path="/oauth/:provider/callback" element={<OAuthCallbackPage />} />
                 <Route path="/planner/:taskId" element={<PlannerTaskPage />} />
 
