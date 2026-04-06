@@ -423,6 +423,70 @@ export interface FeatureSecurityContext {
 }
 
 
+/** Git metadata captured when start_security_review is called (from Claude Code CLI or CI).
+ * Data classification: INTERNAL — contains repo metadata.
+ * authorEmail / authorName are PII — stored encrypted at rest, never logged.
+ */
+export interface ReviewGitContext {
+  branchName?: string;        // feature/fix branch, max 255 chars
+  commitSha?: string;         // full 40-char SHA
+  commitShortSha?: string;    // first 7 chars
+  /** PII — never logged */
+  authorEmail?: string;
+  /** PII — never logged */
+  authorName?: string;
+  commitMessage?: string;     // subject line, max 500 chars
+  commitTimestamp?: string;   // ISO 8601
+  baseBranch?: string;        // target / main branch
+  remoteUrl?: string;         // sanitised remote origin URL
+}
+
+export interface CorrelationSignal {
+  signal: 'branchName' | 'commitSha' | 'authorEmail' | 'authorName' | 'timeWindow' | 'repository' | 'manual';
+  matched: boolean;
+  weight: number;               // contribution to correlationScore
+  detail?: string;
+}
+
+/** Correlated PR or MR data resolved from GitHub / GitLab.
+ * Data classification: INTERNAL
+ */
+export interface CorrelatedPR {
+  provider: 'github' | 'gitlab';
+  repository: string;           // "org/repo"
+  prNumber: number;
+  prUrl: string;                // html_url / web_url
+  prTitle: string;
+  prState: 'open' | 'closed' | 'merged';
+  prAuthorLogin: string;
+  headSha: string;
+  headBranch: string;
+  baseBranch: string;
+  openedAt: string;             // ISO 8601
+  mergedAt?: string;            // ISO 8601
+  closedAt?: string;            // ISO 8601
+  correlationScore: number;     // 0–100; how confident the match is
+  correlationSignals: CorrelationSignal[];
+}
+
+/** Provider-agnostic PR/MR shape used internally by the correlation service. */
+export interface NormalisedPR {
+  provider: 'github' | 'gitlab';
+  repository: string;
+  prNumber: number;
+  prUrl: string;
+  prTitle: string;
+  prState: 'open' | 'closed' | 'merged';
+  prAuthorLogin: string;
+  prAuthorEmail?: string;       // not always available from the API
+  headSha: string;
+  headBranch: string;
+  baseBranch: string;
+  openedAt: string;
+  mergedAt?: string;
+  closedAt?: string;
+}
+
 export interface SecurityReview {
   id: string;
   tenantId: string;
@@ -480,6 +544,21 @@ export interface SecurityReview {
   snapshotTaskRules?: PolicyTaskRule[];
   /** Snapshotted baseline tasks from the policy at review creation time */
   snapshotBaselineTasks?: Omit<SecurityTask, 'id'>[];
+
+  /**
+   * Git context captured at review creation time (from Claude Code CLI or CI).
+   * Data classification: INTERNAL. authorEmail/authorName are PII — never logged.
+   */
+  gitContext?: ReviewGitContext;
+
+  /**
+   * Correlated PR/MR data (populated asynchronously after creation or on demand).
+   * Data classification: INTERNAL.
+   */
+  correlatedPR?: CorrelatedPR;
+
+  /** When the PR correlation was last attempted (ISO 8601). */
+  correlationAttemptedAt?: string;
 }
 
 // ── Overview / Dashboard Types ─────────────────────────────────────────────────

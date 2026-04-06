@@ -16,19 +16,29 @@ import type {
   DataFlowDiffEntry,
   DataClassificationDiffEntry,
   PolicyTaskRule,
+  ReviewGitContext,
+  CorrelatedPR,
 } from '../types';
 import type { BusinessFeature } from '../types/business-feature.types';
 import type { FeatureService } from './featureService';
 import { BASE_QUESTIONS, TASK_RULES, BASELINE_TASKS } from './securityReviewDefaults';
+import { PRCorrelationService, sanitiseGitContext, parseRemoteUrl } from './prCorrelationService';
+import type { CorrelationIntegration } from './prCorrelationService';
+import { GitHubIntegration } from '../integrations/githubIntegration';
+import { GitLabIntegration } from '../integrations/gitlabIntegration';
+import type { ICustomIntegrationRepository } from '../persistence/interfaces';
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export class SecurityReviewService {
 
+  private prCorrelationService = new PRCorrelationService();
+
   constructor(
     private repository: ISecurityReviewRepository,
     private featureService?: FeatureService,
     private policyRepository?: IPolicyTemplateRepository,
+    private customIntegrationRepository?: ICustomIntegrationRepository,
   ) {
   }
 
@@ -42,6 +52,8 @@ export class SecurityReviewService {
       services?: string[];
       repository?: string;
       prLink?: string;
+      /** Raw git context from the agent CLI — will be sanitised before storage */
+      gitContext?: Record<string, unknown>;
     },
   ): Promise<SecurityReview> {
     const now = new Date().toISOString();
@@ -109,6 +121,18 @@ export class SecurityReviewService {
       createdAt: now,
       updatedAt: now,
     };
+
+    // Sanitise and attach git context when provided.
+    // [Critical-2] All fields pass sanitiseGitContext() before storage — never raw.
+    // [Critical-4] authorEmail/authorName are stored but never logged below.
+    if (options?.gitContext && typeof options.gitContext === 'object') {
+      const sanitised = sanitiseGitContext(options.gitContext);
+      // Only attach when at least one field survived sanitisation
+      if (Object.keys(sanitised).length > 0) {
+        review.gitContext = sanitised;
+      }
+    }
+
     return this.repository.create(review);
   }
 
@@ -242,8 +266,209 @@ export class SecurityReviewService {
     return this.repository.getById(id, tenantId);
   }
 
-  async listReviews(tenantId: string): Promise<SecurityReview[]> {
-    return this.repository.getAll(tenantId);
+  async listReviews(
+    tenantId: string,
+    filters?: {
+      prUrl?: string;
+      branchName?: string;
+      repository?: string;
+    },
+  ): Promise<SecurityReview[]> {
+    const all = await this.repository.getAll(tenantId);
+    if (!filters) return all;
+
+    return all.filter(r => {
+      if (filters.prUrl) {
+        const matchesPrLink = r.prLink === filters.prUrl;
+        const matchesCorrelatedPR = r.correlatedPR?.prUrl === filters.prUrl;
+        if (!matchesPrLink && !matchesCorrelatedPR) return false;
+      }
+      if (filters.branchName) {
+        if (r.gitContext?.branchName?.toLowerCase() !== filters.branchName.toLowerCase()) return false;
+      }
+      if (filters.repository) {
+        if (r.repository?.toLowerCase() !== filters.repository.toLowerCase()) return false;
+      }
+      return true;
+    });
+  }
+
+  /**
+   * Trigger on-demand PR correlation for a review.
+   * Fetches candidate PRs from the connected integration and stores the best match.
+   *
+   * Security:
+   *   [Critical-1]  Only integrations belonging to this tenant are fetched.
+   *   [Critical-4]  authorEmail / authorName are never logged below.
+   *   [High-6]      Rate-limiting is enforced at the HTTP layer (route middleware).
+   *   [Medium-11]   Mutation is logged with tenantId and timestamp.
+   */
+  async correlatePR(
+    id: string,
+    tenantId: string,
+    overridePrUrl?: string,
+  ): Promise<{ review: SecurityReview; candidates: CorrelatedPR[] }> {
+    const review = await this.requireReview(id, tenantId);
+
+    // Manual link path: pin exact PR, skip scoring
+    if (overridePrUrl) {
+      return this.linkPR(id, tenantId, overridePrUrl).then(r => ({ review: r, candidates: [] }));
+    }
+
+    const integrations = await this.resolveIntegrationsForReview(tenantId, review);
+
+    const { correlated, candidates, error } = await this.prCorrelationService.correlatePR(review, integrations);
+
+    if (error && !correlated) {
+      const updated = await this.repository.update(id, tenantId, {
+        correlationAttemptedAt: new Date().toISOString(),
+      });
+      return { review: updated, candidates: [] };
+    }
+
+    // [Medium-11] Audit log — tenantId only, no PII
+    console.info(`[SecurityReview] correlatePR: review=${id} tenant=${tenantId} score=${correlated?.correlationScore ?? 'none'} ts=${new Date().toISOString()}`);
+
+    const updated = await this.repository.update(id, tenantId, {
+      correlationAttemptedAt: new Date().toISOString(),
+      ...(correlated && { correlatedPR: correlated }),
+    });
+
+    return { review: updated, candidates };
+  }
+
+  /**
+   * Return PR candidates (score 40–59) for a review without persisting them.
+   * Used for the "Possible matches" UI panel.
+   */
+  async getPRCandidates(
+    id: string,
+    tenantId: string,
+  ): Promise<CorrelatedPR[]> {
+    const review = await this.requireReview(id, tenantId);
+    const integrations = await this.resolveIntegrationsForReview(tenantId, review);
+    const { candidates } = await this.prCorrelationService.correlatePR(review, integrations);
+    return candidates;
+  }
+
+  /**
+   * Manually link a specific PR URL to a review (sets score=100, signals=[{signal:"manual"}]).
+   *
+   * Security:
+   *   [Critical-1]  Tenant-scoped; only the review owner can link.
+   *   [Medium-11]   Mutation logged with tenantId and timestamp (no PII).
+   */
+  async linkPR(
+    id: string,
+    tenantId: string,
+    prUrl: string,
+  ): Promise<SecurityReview> {
+    const review = await this.requireReview(id, tenantId);
+    const integrations = await this.resolveIntegrationsForReview(tenantId, review);
+
+    if (integrations.length === 0) {
+      throw new Error('No integration found for this repository');
+    }
+
+    // Use first suitable integration to fetch PR data
+    let correlatedPR: CorrelatedPR | null = null;
+    for (const integration of integrations) {
+      try {
+        correlatedPR = await this.prCorrelationService.fetchPRByUrl(prUrl, integration);
+        break;
+      } catch {
+        // Try next integration
+      }
+    }
+
+    if (!correlatedPR) {
+      throw new Error('PR fetch failed');
+    }
+
+    // [Medium-11] Audit log — tenantId only, no PII
+    console.info(`[SecurityReview] linkPR: review=${id} tenant=${tenantId} prUrl=[redacted] ts=${new Date().toISOString()}`);
+
+    return this.repository.update(id, tenantId, {
+      correlatedPR,
+      correlationAttemptedAt: new Date().toISOString(),
+    });
+  }
+
+  // ── Private: integration resolution ──────────────────────────────────────
+
+  /**
+   * Resolve the correct GitHub / GitLab integration for a review's repository.
+   *
+   * Logic:
+   *  1. Parse provider + org/repo from review.repository or gitContext.remoteUrl.
+   *  2. Load all custom integrations for this tenant.
+   *  3. Match GitHub by type='code' with config.installationId.
+   *  4. Match GitLab by type='code' with config.groupAccessToken.
+   *
+   * Security: [Critical-1] — always filters by tenantId; never cross-tenant.
+   */
+  private async resolveIntegrationsForReview(
+    tenantId: string,
+    review: SecurityReview,
+  ): Promise<CorrelationIntegration[]> {
+    if (!this.customIntegrationRepository) return [];
+
+    let parsed: { provider: string; owner: string; repo: string; slug: string } = { provider: 'unknown', owner: '', repo: '', slug: '' };
+    if (review.repository) {
+      // Try as "owner/repo" slug directly
+      const parts = review.repository.split('/');
+      if (parts.length === 2) {
+        parsed = { provider: 'unknown', owner: parts[0], repo: parts[1], slug: review.repository };
+      }
+    }
+    if (review.gitContext?.remoteUrl) {
+      const fromUrl = parseRemoteUrl(review.gitContext.remoteUrl);
+      if (fromUrl.provider !== 'unknown') parsed = fromUrl;
+    }
+
+    let integrations: CorrelationIntegration[] = [];
+
+    try {
+      const allIntegrations = await this.customIntegrationRepository.getAll(tenantId, true);
+
+      for (const integration of allIntegrations) {
+        const cfg = integration.config as Record<string, string>;
+
+        // GitHub App installation
+        if (cfg.installationId) {
+          const gh = new GitHubIntegration({
+            tenantId,
+            installationId: cfg.installationId,
+          });
+          integrations.push({
+            type: 'github',
+            github: gh,
+            owner: parsed.owner || cfg.owner,
+            repo: parsed.repo || cfg.repo,
+          });
+        }
+
+        // GitLab group access token
+        if (cfg.groupAccessToken) {
+          const gl = new GitLabIntegration({
+            tenantId,
+            groupAccessToken: cfg.groupAccessToken,
+            groupId: cfg.groupId,
+            baseUrl: cfg.baseUrl,
+          });
+          integrations.push({
+            type: 'gitlab',
+            gitlab: gl,
+            owner: parsed.owner || cfg.groupId,
+            repo: parsed.repo,
+          });
+        }
+      }
+    } catch {
+      // Non-fatal — return whatever we have
+    }
+
+    return integrations;
   }
 
   /**

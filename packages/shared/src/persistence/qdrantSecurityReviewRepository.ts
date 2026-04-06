@@ -28,6 +28,13 @@ function normalizeReview(review: SecurityReview): SecurityReview {
   };
 }
 
+/** Filters for querying security reviews. */
+export interface SecurityReviewFilters {
+  prUrl?: string;
+  branchName?: string;
+  repository?: string;
+}
+
 export class QdrantSecurityReviewRepository implements ISecurityReviewRepository {
   private client: QdrantClient;
   private collectionName: string;
@@ -61,6 +68,22 @@ export class QdrantSecurityReviewRepository implements ISecurityReviewRepository
       await this.client.createPayloadIndex(this.collectionName, {
         field_name: 'status',
         field_schema: 'keyword',
+      });
+
+      // New indexes for PR correlation filtering
+      await this.client.createPayloadIndex(this.collectionName, {
+        field_name: 'gitContext.branchName',
+        field_schema: 'keyword',
+      });
+
+      await this.client.createPayloadIndex(this.collectionName, {
+        field_name: 'correlatedPR.prUrl',
+        field_schema: 'keyword',
+      });
+
+      await this.client.createPayloadIndex(this.collectionName, {
+        field_name: 'correlatedPR.prNumber',
+        field_schema: 'integer',
       });
     }
 

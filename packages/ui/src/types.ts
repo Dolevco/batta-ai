@@ -773,6 +773,47 @@ export interface FeatureSecurityContext {
   }>;
 }
 
+// ── PR Correlation Types ──────────────────────────────────────────────────────
+
+/** Git metadata captured when start_security_review is called (from Claude Code CLI or CI). */
+export interface ReviewGitContext {
+  branchName?: string;
+  commitSha?: string;
+  commitShortSha?: string;
+  authorEmail?: string;
+  authorName?: string;
+  commitMessage?: string;
+  commitTimestamp?: string;
+  baseBranch?: string;
+  remoteUrl?: string;
+}
+
+export interface CorrelationSignal {
+  signal: 'branchName' | 'commitSha' | 'authorEmail' | 'authorName' | 'timeWindow' | 'repository' | 'manual';
+  matched: boolean;
+  weight: number;
+  detail?: string;
+}
+
+/** Correlated PR or MR data resolved from GitHub / GitLab. */
+export interface CorrelatedPR {
+  provider: 'github' | 'gitlab';
+  repository: string;
+  prNumber: number;
+  prUrl: string;
+  prTitle: string;
+  prState: 'open' | 'closed' | 'merged';
+  prAuthorLogin: string;
+  headSha: string;
+  headBranch: string;
+  baseBranch: string;
+  openedAt: string;
+  mergedAt?: string;
+  closedAt?: string;
+  correlationScore: number;
+  correlationSignals: CorrelationSignal[];
+}
+
 export interface SecurityReview {
   id: string;
   tenantId: string;
@@ -815,6 +856,15 @@ export interface SecurityReview {
   policyTemplateVersion?: number;
   /** Type of policy template used to create this review */
   policyTemplateType?: PolicyTemplateType;
+  /**
+   * Git context captured at review creation time.
+   * PII fields (authorEmail/authorName) are redacted by the API before sending to UI.
+   */
+  gitContext?: ReviewGitContext;
+  /** Correlated PR/MR data (populated asynchronously after creation or on demand). */
+  correlatedPR?: CorrelatedPR;
+  /** When the PR correlation was last attempted (ISO 8601). */
+  correlationAttemptedAt?: string;
 }
 
 export interface SecurityReviewAttestationSummary {

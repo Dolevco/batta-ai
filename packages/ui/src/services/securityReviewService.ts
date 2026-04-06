@@ -4,6 +4,7 @@ import type {
   SecurityReviewAnswer,
   SecurityAttestation,
   SecurityReviewAttestationSummary,
+  CorrelatedPR,
 } from '../types';
 
 export async function listSecurityReviews(
@@ -89,6 +90,69 @@ export async function refreshSnapshot(
     getToken,
     `${API_BASE}/security-reviews/${encodeURIComponent(id)}/refresh-snapshot`,
     { method: 'POST', body: JSON.stringify({}) }
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as any).error || `Request failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * POST /security-reviews/:id/correlate-pr
+ * Trigger on-demand PR correlation.
+ * Returns { review, candidates }.
+ */
+export async function correlatePR(
+  getToken: () => Promise<string | null>,
+  id: string,
+  prUrl?: string,
+): Promise<{ review: SecurityReview; candidates: CorrelatedPR[] }> {
+  const response = await fetchWithAuth(
+    getToken,
+    `${API_BASE}/security-reviews/${encodeURIComponent(id)}/correlate-pr`,
+    { method: 'POST', body: JSON.stringify(prUrl ? { prUrl } : {}) },
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as any).error || `Correlation failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * GET /security-reviews/:id/pr-candidates
+ * Fetch candidate PRs (score 40–59) without persisting a match.
+ */
+export async function getPRCandidates(
+  getToken: () => Promise<string | null>,
+  id: string,
+): Promise<CorrelatedPR[]> {
+  const response = await fetchWithAuth(
+    getToken,
+    `${API_BASE}/security-reviews/${encodeURIComponent(id)}/pr-candidates`,
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as any).error || `Request failed with status ${response.status}`);
+  }
+  const { candidates } = await response.json();
+  return candidates ?? [];
+}
+
+/**
+ * PUT /security-reviews/:id/correlated-pr
+ * Manually link a specific PR URL to a review.
+ */
+export async function linkPR(
+  getToken: () => Promise<string | null>,
+  id: string,
+  prUrl: string,
+): Promise<SecurityReview> {
+  const response = await fetchWithAuth(
+    getToken,
+    `${API_BASE}/security-reviews/${encodeURIComponent(id)}/correlated-pr`,
+    { method: 'PUT', body: JSON.stringify({ prUrl }) },
   );
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

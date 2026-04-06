@@ -14,6 +14,8 @@ export { SecurityReviewService } from './services/securityReviewService';
 export { PolicyService } from './services/policyService';
 export { FeatureService, FEATURE_ANALYSES_COLLECTION } from './services/featureService';
 export type { FeatureSemanticSearchResult } from './services/featureService';
+export { PRCorrelationService, sanitiseGitContext, parseRemoteUrl, scorePR } from './services/prCorrelationService';
+export type { CorrelationIntegration, ParsedRemote } from './services/prCorrelationService';
 
 // Pipeline output types (new 3-pass pre-analysis)
 export type { ServiceFileMap, ServiceSkeleton, ServiceExternalSurface } from './types/canonical.types';
