@@ -1,4 +1,5 @@
 import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { TaskController } from '../controllers/taskController';
 import { MCPIntegrationController } from '../controllers/mcpIntegrationController';
 import { AgentController } from '../controllers/agentController';
@@ -18,6 +19,32 @@ import { FeatureController } from '../controllers/featureController';
 import { authMiddleware } from '../middleware/auth';
 import { PolicyService, createPolicyTemplateRepository } from '@ai-agent/shared';
 
+// ── PR Correlation rate limiter ────────────────────────────────────────────────
+// [High-6] correlatePR calls external GitHub/GitLab APIs and is expensive.
+// Limit: 10 requests per tenant per minute using a simple in-memory sliding window.
+// Note: for multi-instance deployments, replace with a Redis-backed rate limiter.
+
+const _correlationWindow: Map<string, number[]> = new Map();
+const CORRELATE_MAX_REQUESTS = 10;
+const CORRELATE_WINDOW_MS = 60_000; // 1 minute
+
+function prCorrelationRateLimiter(req: Request, res: Response, next: NextFunction): void {
+  // Use tenantId from verified JWT; fall back to IP for unauthenticated cases
+  const key: string = (req.auth as { tenantId?: string } | undefined)?.tenantId
+    ?? req.ip
+    ?? 'unknown';
+
+  const now = Date.now();
+  const timestamps = (_correlationWindow.get(key) ?? []).filter(t => now - t < CORRELATE_WINDOW_MS);
+  if (timestamps.length >= CORRELATE_MAX_REQUESTS) {
+    res.status(429).json({ error: 'Too many correlation requests. Please wait before retrying.' });
+    return;
+  }
+  timestamps.push(now);
+  _correlationWindow.set(key, timestamps);
+  next();
+}
+
 /**
  * Router for security review REST endpoints.
  * TenantId is resolved from JWT auth context, request body, query string, or X-Tenant-Id header.
@@ -34,6 +61,14 @@ export function createSecurityReviewRouter(controller: SecurityReviewController)
   router.post('/security-reviews/:id/attestations', controller.submitAttestations.bind(controller));
   router.get('/security-reviews/:id/attestation-summary', controller.getAttestationSummary.bind(controller));
   router.post('/security-reviews/:id/refresh-snapshot', controller.refreshSnapshot.bind(controller));
+
+  // PR correlation endpoints
+  // [High-6] correlatePR is expensive (calls GitHub/GitLab APIs) — protected by
+  // per-tenant rate limiting (10 req/min) enforced in the controller layer via
+  // prCorrelationRateLimiter middleware.
+  router.post('/security-reviews/:id/correlate-pr', prCorrelationRateLimiter, controller.correlatePR.bind(controller));
+  router.get('/security-reviews/:id/pr-candidates', controller.getPRCandidates.bind(controller));
+  router.put('/security-reviews/:id/correlated-pr', controller.linkPR.bind(controller));
 
   return router;
 }

@@ -1,5 +1,6 @@
 import { Tool, ToolResult, ToolCategory, GitToolConfig } from '@ai-agent/core';
 import { CodeIntegrationHandler, CodeIntegrationRepository } from '../types';
+import type { NormalisedPR } from '../types';
 
 const GitLabCategory: ToolCategory = {
   name: 'gitlab',
@@ -351,8 +352,75 @@ export class GitLabIntegration implements CodeIntegrationHandler {
     };
   }
 
-  // ─── Static utilities ─────────────────────────────────────────────────────
+  // ─── MR correlation methods ───────────────────────────────────────────────
 
+  /**
+   * List MRs for a source branch.
+   * Security: [Critical-3] — projectRef and branch are passed as encodeURIComponent values;
+   * never concatenated raw into query strings.
+   */
+  public async listMRsForBranch(projectRef: string, branch: string): Promise<NormalisedPR[]> {
+    const pid = this.resolveProjectId(projectRef);
+    const state = 'all';
+    const mrs = await this.fetchJson<any[]>(
+      `/api/v4/projects/${pid}/merge_requests?source_branch=${encodeURIComponent(branch)}&state=${state}&per_page=30`,
+    );
+    return mrs.map(mr => this.normaliseMR(mr, projectRef));
+  }
+
+  /**
+   * List MRs containing a specific commit SHA.
+   * Security: [Critical-3] — sha is passed via encodeURIComponent.
+   * Note: GitLab 15.6+ required; older versions fall back gracefully (empty array).
+   */
+  public async listMRsForCommit(projectRef: string, sha: string): Promise<NormalisedPR[]> {
+    const pid = this.resolveProjectId(projectRef);
+    try {
+      const mrs = await this.fetchJson<any[]>(
+        `/api/v4/projects/${pid}/repository/commits/${encodeURIComponent(sha)}/merge_requests`,
+      );
+      return mrs.map(mr => this.normaliseMR(mr, projectRef));
+    } catch {
+      // GitLab < 15.6 or commit not found — return empty, caller falls back to branch search
+      return [];
+    }
+  }
+
+  /**
+   * Fetch a single MR by iid.
+   * Security: [Critical-3] — mrIid is an integer, no injection risk; projectRef is encoded.
+   */
+  public async getMR(projectRef: string, mrIid: number): Promise<NormalisedPR> {
+    const pid = this.resolveProjectId(projectRef);
+    const mr = await this.fetchJson<any>(`/api/v4/projects/${pid}/merge_requests/${mrIid}`);
+    return this.normaliseMR(mr, projectRef);
+  }
+
+  /** Normalise a GitLab REST MR response into the provider-agnostic NormalisedPR shape. */
+  private normaliseMR(mr: any, repository: string): NormalisedPR {
+    const state: NormalisedPR['prState'] =
+      mr.state === 'merged' ? 'merged' :
+      mr.state === 'closed' ? 'closed' :
+      'open';
+
+    return {
+      provider: 'gitlab',
+      repository,
+      prNumber: mr.iid,
+      prUrl: mr.web_url,
+      prTitle: mr.title,
+      prState: state,
+      prAuthorLogin: mr.author?.username ?? '',
+      headSha: mr.sha ?? mr.diff_refs?.head_sha ?? '',
+      headBranch: mr.source_branch ?? '',
+      baseBranch: mr.target_branch ?? '',
+      openedAt: mr.created_at,
+      ...(mr.merged_at ? { mergedAt: mr.merged_at } : {}),
+      ...(mr.closed_at ? { closedAt: mr.closed_at } : {}),
+    };
+  }
+
+  // ─── Static utilities ─────────────────────────────────────────────────────
   /** Normalise and validate a GitLab base URL. Defaults to https://gitlab.com. */
   static normaliseBaseUrl(baseUrl?: string): string {
     const url = (baseUrl ? baseUrl : 'https://gitlab.com').trim().replace(/\/$/, '');

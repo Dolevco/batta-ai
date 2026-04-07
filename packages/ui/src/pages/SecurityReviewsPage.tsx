@@ -3,7 +3,7 @@ import { Button } from 'antd';
 import {
   SafetyOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, ReloadOutlined, ApiOutlined, LinkOutlined,
-  GithubOutlined,
+  GithubOutlined, BranchesOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { SecurityReview, SecurityReviewStatus } from '../types';
@@ -291,7 +291,7 @@ function ReviewRow({ review, onNavigate, isDark }: { review: SecurityReview; onN
 
       {/* Repository */}
       <td style={{ padding: '13px 16px', width: 200 }}>
-        {review.repository || review.prLink ? (
+        {review.repository || review.prLink || review.correlatedPR ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {review.repository && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, maxWidth: 180 }}>
@@ -305,7 +305,32 @@ function ReviewRow({ review, onNavigate, isDark }: { review: SecurityReview; onN
                 </span>
               </div>
             )}
-            {review.prLink && (
+            {/* Correlated PR badge (auto-matched) */}
+            {review.correlatedPR && (
+              <a
+                href={review.correlatedPR.prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                title={`${review.correlatedPR.prTitle} (score: ${review.correlatedPR.correlationScore})`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: 11, fontWeight: 600,
+                  color: T.green,
+                  background: dk(isDark, T.greenLight, D.greenLight),
+                  border: `1px solid ${dk(isDark, T.greenBorder, D.greenBorder)}`,
+                  padding: '2px 7px', borderRadius: 6,
+                  textDecoration: 'none', maxWidth: 180,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+              >
+                <BranchesOutlined style={{ fontSize: 9, flexShrink: 0 }} />
+                {review.correlatedPR.provider === 'github' ? 'GH' : 'GL'} #{review.correlatedPR.prNumber}
+                <span style={{ opacity: 0.7 }}>·{review.correlatedPR.correlationScore}</span>
+              </a>
+            )}
+            {/* Manual prLink (no auto-correlation yet) */}
+            {!review.correlatedPR && review.prLink && (
               <a
                 href={review.prLink}
                 target="_blank"

@@ -4,6 +4,7 @@ import type {
   SecurityReviewAnswer,
   SecurityAttestation,
   SecurityReviewAttestationSummary,
+  CorrelatedPR,
 } from '../types';
 import * as securityReviewService from '../services/securityReviewService';
 import { useAuth } from './useAuth';
@@ -137,6 +138,57 @@ export function useSecurityReviews() {
     }
   }, [acquireToken]);
 
+  const correlatePR = useCallback(
+    async (id: string, prUrl?: string): Promise<{ review: SecurityReview; candidates: CorrelatedPR[] }> => {
+      setLoading(true);
+      setError(null);
+      try {
+        return await securityReviewService.correlatePR(acquireToken, id, prUrl);
+      } catch (err: any) {
+        const msg = err.message || 'PR correlation failed';
+        setError(msg);
+        throw new Error(msg);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [acquireToken],
+  );
+
+  const getPRCandidates = useCallback(
+    async (id: string): Promise<CorrelatedPR[]> => {
+      setLoading(true);
+      setError(null);
+      try {
+        return await securityReviewService.getPRCandidates(acquireToken, id);
+      } catch (err: any) {
+        const msg = err.message || 'Failed to load PR candidates';
+        setError(msg);
+        throw new Error(msg);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [acquireToken],
+  );
+
+  const linkPR = useCallback(
+    async (id: string, prUrl: string): Promise<SecurityReview> => {
+      setLoading(true);
+      setError(null);
+      try {
+        return await securityReviewService.linkPR(acquireToken, id, prUrl);
+      } catch (err: any) {
+        const msg = err.message || 'Failed to link PR';
+        setError(msg);
+        throw new Error(msg);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [acquireToken],
+  );
+
   return {
     loading,
     error,
@@ -148,5 +200,8 @@ export function useSecurityReviews() {
     acknowledgeTasks,
     submitAttestations,
     refreshSnapshot,
+    correlatePR,
+    getPRCandidates,
+    linkPR,
   };
 }

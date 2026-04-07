@@ -2,6 +2,7 @@ import { Octokit } from '@octokit/rest';
 import { getInstallationToken } from './githubAuth';
 import { Tool, ToolResult, ToolCategory, GitToolConfig } from '@ai-agent/core';
 import { CodeIntegrationHandler, CodeIntegrationRepository } from '../types';
+import type { NormalisedPR } from '../types';
 
 const GitHubCategory: ToolCategory = {
   name: 'github',
@@ -409,5 +410,85 @@ export class GitHubIntegration implements CodeIntegrationHandler {
       // On error, return empty list so callers can handle gracefully
       return [];
     }
+  }
+
+  // ── PR correlation methods ────────────────────────────────────────────────
+
+  /**
+   * List open and closed PRs for a branch.
+   *
+   * Security: [Critical-3] — owner, repo, and branch are passed as discrete parameters
+   * to octokit; octokit encodes them in the URL internally — no string concatenation.
+   */
+  public async listPRsForBranch(owner: string, repo: string, branch: string): Promise<NormalisedPR[]> {
+    const token = await this.getAccessToken();
+    const octokit = new Octokit({ auth: token });
+
+    const results: NormalisedPR[] = [];
+    for (const state of ['open', 'closed'] as const) {
+      const { data } = await octokit.rest.pulls.list({
+        owner,
+        repo,
+        head: `${owner}:${branch}`,
+        state,
+        per_page: 30,
+      });
+      results.push(...data.map(pr => this.normalisePR(pr, `${owner}/${repo}`)));
+    }
+    return results;
+  }
+
+  /**
+   * Fetch PRs associated with a specific commit SHA.
+   *
+   * Security: [Critical-3] — owner, repo, and sha are discrete octokit parameters.
+   */
+  public async listPRsForCommit(owner: string, repo: string, sha: string): Promise<NormalisedPR[]> {
+    const token = await this.getAccessToken();
+    const octokit = new Octokit({ auth: token });
+
+    const { data } = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
+      owner,
+      repo,
+      commit_sha: sha,
+    });
+    return data.map(pr => this.normalisePR(pr, `${owner}/${repo}`));
+  }
+
+  /**
+   * Fetch a single PR by number.
+   *
+   * Security: [Critical-3] — owner, repo, pull_number are discrete octokit parameters.
+   */
+  public async getPR(owner: string, repo: string, prNumber: number): Promise<NormalisedPR> {
+    const token = await this.getAccessToken();
+    const octokit = new Octokit({ auth: token });
+
+    const { data } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    return this.normalisePR(data, `${owner}/${repo}`);
+  }
+
+  /** Normalise a GitHub REST PR response into the provider-agnostic NormalisedPR shape. */
+  private normalisePR(pr: any, repository: string): NormalisedPR {
+    const state: NormalisedPR['prState'] =
+      pr.merged_at ? 'merged' :
+      pr.state === 'closed' ? 'closed' :
+      'open';
+
+    return {
+      provider: 'github',
+      repository,
+      prNumber: pr.number,
+      prUrl: pr.html_url,
+      prTitle: pr.title,
+      prState: state,
+      prAuthorLogin: pr.user?.login ?? '',
+      headSha: pr.head?.sha ?? '',
+      headBranch: pr.head?.ref ?? '',
+      baseBranch: pr.base?.ref ?? '',
+      openedAt: pr.created_at,
+      ...(pr.merged_at ? { mergedAt: pr.merged_at } : {}),
+      ...(pr.closed_at ? { closedAt: pr.closed_at } : {}),
+    };
   }
 }

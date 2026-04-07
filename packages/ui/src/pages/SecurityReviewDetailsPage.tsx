@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  Space, Typography, Breadcrumb, Spin, Alert, Timeline, Table, Tag, Collapse,
+  Space, Typography, Breadcrumb, Spin, Alert, Timeline, Table, Tag, Collapse, Input, Button,
 } from 'antd';
 import {
   SafetyOutlined, CheckCircleOutlined, CloseCircleOutlined,
@@ -9,11 +9,11 @@ import {
   WarningOutlined, ApartmentOutlined,
   ApiOutlined, LinkOutlined, ThunderboltOutlined, BookOutlined,
   LockOutlined, RobotOutlined, GlobalOutlined, ArrowLeftOutlined,
-  GithubOutlined,
+  GithubOutlined, BranchesOutlined, SyncOutlined, EditOutlined, CheckOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import type {
-  SecurityReview,
+  SecurityReview, CorrelatedPR,
   SecurityReviewStatus, SecurityReviewAttestationSummary, PolicyTemplate, PolicyTemplateType,
 } from '../types';
 import { useSecurityReviews } from '../hooks/useSecurityReviews';
@@ -1288,7 +1288,389 @@ function PoliciesSection({ review, policies, isDark }: { review: SecurityReview;
 
 // ── Nav items ──────────────────────────────────────────────────────────────────
 
-type SectionId = 'overview' | 'questionnaire' | 'tasks' | 'attestations' | 'summary' | 'threat-model' | 'policies';
+// ── PR Correlation Section ────────────────────────────────────────────────────
+
+function CorrelationScoreBadge({ score, isDark }: { score: number; isDark: boolean }) {
+  const color = score >= 80 ? T.green : score >= 60 ? T.amber : T.stone400;
+  const bg    = score >= 80 ? dk(isDark, T.greenLight,  D.greenLight)
+               : score >= 60 ? dk(isDark, T.amberLight, D.amberLight)
+               : dk(isDark, T.stone100, D.bgCard);
+  const border = score >= 80 ? dk(isDark, T.greenBorder,  D.greenBorder)
+               : score >= 60 ? dk(isDark, T.amberBorder,  D.amberBorder)
+               : dk(isDark, T.stone300, D.borderSub);
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+      color, background: bg, border: `1px solid ${border}`,
+    }}>
+      {score}% match
+    </span>
+  );
+}
+
+function PRStateChip({ state, isDark }: { state: CorrelatedPR['prState']; isDark: boolean }) {
+  const cfg: Record<string, { color: string; bg: string; border: string; label: string }> = {
+    open:   { color: T.green,  bg: dk(isDark, T.greenLight, D.greenLight),   border: dk(isDark, T.greenBorder, D.greenBorder),   label: 'Open' },
+    closed: { color: T.red,    bg: dk(isDark, T.redLight,   D.redLight),     border: dk(isDark, T.redBorder,   D.redBorder),     label: 'Closed' },
+    merged: { color: T.purple, bg: dk(isDark, T.purpleLight, D.purpleLight), border: dk(isDark, T.purpleBorder ?? T.purple, D.purpleBorder ?? D.text), label: 'Merged' },
+  };
+  const c = cfg[state] ?? cfg.closed;
+  return (
+    <span style={{
+      display: 'inline-block', padding: '2px 8px', borderRadius: 6,
+      fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' as const,
+      color: c.color, background: c.bg, border: `1px solid ${c.border}`,
+    }}>
+      {c.label}
+    </span>
+  );
+}
+
+function PRCandidateCard({
+  pr, isDark, onLink,
+}: { pr: CorrelatedPR; isDark: boolean; onLink: (url: string) => void }) {
+  return (
+    <div style={{
+      background: dk(isDark, T.white, D.bgSub),
+      border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+      borderRadius: 10, padding: '12px 16px',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+        <div>
+          <a href={pr.prUrl} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 13, fontWeight: 600, color: T.blue, textDecoration: 'none' }}>
+            {pr.prTitle}
+          </a>
+          <div style={{ fontSize: 11, color: T.stone400, marginTop: 2 }}>
+            {pr.provider === 'github' ? 'GitHub' : 'GitLab'} · {pr.repository} · #{pr.prNumber} · @{pr.prAuthorLogin}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          <PRStateChip state={pr.prState} isDark={isDark} />
+          <CorrelationScoreBadge score={pr.correlationScore} isDark={isDark} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        {pr.correlationSignals.filter(s => s.matched).map(s => (
+          <span key={s.signal} style={{
+            fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 5,
+            background: dk(isDark, T.blueLight, D.blueLight),
+            border: `1px solid ${dk(isDark, T.blueBorder, D.blueBorder)}`,
+            color: T.blue,
+          }}>
+            ✓ {s.signal}
+          </span>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <a href={pr.prUrl} target="_blank" rel="noopener noreferrer"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 6,
+            background: dk(isDark, T.stone100, D.bgCard),
+            border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+            color: dk(isDark, T.stone600, D.textMuted),
+            textDecoration: 'none', cursor: 'pointer',
+          }}>
+          <LinkOutlined style={{ fontSize: 10 }} /> View PR
+        </a>
+        <button
+          onClick={() => onLink(pr.prUrl)}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 6,
+            background: T.green,
+            border: 'none', color: '#fff', cursor: 'pointer',
+          }}>
+          <CheckOutlined style={{ fontSize: 10 }} /> Link this PR
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PRCorrelationSection({
+  review, isDark, onReviewUpdate,
+}: { review: SecurityReview; isDark: boolean; onReviewUpdate: (r: SecurityReview) => void }) {
+  const { correlatePR, getPRCandidates, linkPR, loading } = useSecurityReviews();
+  const [candidates, setCandidates] = useState<CorrelatedPR[]>([]);
+  const [candidatesLoaded, setCandidatesLoaded] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [correlateError, setCorrelateError] = useState<string | null>(null);
+
+  const handleCorrelate = useCallback(async () => {
+    setCorrelateError(null);
+    try {
+      const { review: updated, candidates: c } = await correlatePR(review.id);
+      onReviewUpdate(updated);
+      setCandidates(c);
+      setCandidatesLoaded(true);
+    } catch (e: any) {
+      setCorrelateError(e.message || 'Correlation failed');
+    }
+  }, [review.id, correlatePR, onReviewUpdate]);
+
+  const handleLoadCandidates = useCallback(async () => {
+    setCorrelateError(null);
+    try {
+      const c = await getPRCandidates(review.id);
+      setCandidates(c);
+      setCandidatesLoaded(true);
+    } catch (e: any) {
+      setCorrelateError(e.message || 'Failed to load candidates');
+    }
+  }, [review.id, getPRCandidates]);
+
+  const handleLinkManual = useCallback(async () => {
+    setLinkError(null);
+    const trimmed = linkUrl.trim();
+    if (!trimmed) { setLinkError('Please enter a PR URL'); return; }
+    try { new URL(trimmed); } catch { setLinkError('Please enter a valid https:// URL'); return; }
+    if (!trimmed.startsWith('https://')) { setLinkError('URL must start with https://'); return; }
+    try {
+      const updated = await linkPR(review.id, trimmed);
+      onReviewUpdate(updated);
+      setLinkUrl('');
+    } catch (e: any) {
+      setLinkError(e.message || 'Failed to link PR');
+    }
+  }, [review.id, linkUrl, linkPR, onReviewUpdate]);
+
+  const handleLinkCandidate = useCallback(async (prUrl: string) => {
+    setCorrelateError(null);
+    try {
+      const updated = await linkPR(review.id, prUrl);
+      onReviewUpdate(updated);
+    } catch (e: any) {
+      setCorrelateError(e.message || 'Failed to link PR');
+    }
+  }, [review.id, linkPR, onReviewUpdate]);
+
+  const corPR = review.correlatedPR;
+  const hasGitContext = !!review.gitContext?.branchName || !!review.gitContext?.commitSha;
+
+  return (
+    <div>
+      <SectionHeader
+        isDark={isDark}
+        title="PR / MR Correlation"
+        subtitle="Correlate this security review with a pull request or merge request"
+      />
+
+      {/* Correlated PR card */}
+      {corPR ? (
+        <div style={{
+          background: dk(isDark, T.greenLight, D.greenLight),
+          border: `1px solid ${dk(isDark, T.greenBorder, D.greenBorder)}`,
+          borderRadius: 12, padding: '16px 20px', marginBottom: 20,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <BranchesOutlined style={{ color: T.green, fontSize: 16 }} />
+                <span style={{ fontSize: 14, fontWeight: 700, color: dk(isDark, T.stone800, D.text) }}>
+                  Correlated PR
+                </span>
+                <PRStateChip state={corPR.prState} isDark={isDark} />
+                <CorrelationScoreBadge score={corPR.correlationScore} isDark={isDark} />
+              </div>
+              <a href={corPR.prUrl} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 15, fontWeight: 600, color: T.blue, textDecoration: 'none', display: 'block', marginBottom: 4 }}>
+                {corPR.prTitle}
+              </a>
+              <div style={{ fontSize: 12, color: T.stone400 }}>
+                {corPR.provider === 'github' ? 'GitHub' : 'GitLab'} · {corPR.repository} · #{corPR.prNumber}
+                {' · '}@{corPR.prAuthorLogin}
+                {' · '}branch: <code style={{ fontSize: 11 }}>{corPR.headBranch}</code>
+                {' → '}<code style={{ fontSize: 11 }}>{corPR.baseBranch}</code>
+              </div>
+              {corPR.headSha && (
+                <div style={{ fontSize: 11, color: T.stone400, marginTop: 2 }}>
+                  SHA: <code style={{ fontSize: 11 }}>{corPR.headSha.slice(0, 7)}</code>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Signal breakdown */}
+          {corPR.correlationSignals.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: T.stone500, fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Correlation signals
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {corPR.correlationSignals.map(s => (
+                  <span key={s.signal} style={{
+                    fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 5,
+                    background: s.matched
+                      ? dk(isDark, T.blueLight, D.blueLight)
+                      : dk(isDark, T.stone100, D.bgCard),
+                    border: `1px solid ${s.matched ? dk(isDark, T.blueBorder, D.blueBorder) : dk(isDark, T.stone200, D.borderSub)}`,
+                    color: s.matched ? T.blue : T.stone400,
+                  }}>
+                    {s.matched ? '✓' : '✗'} {s.signal}
+                    {s.weight > 0 && <span style={{ opacity: 0.7 }}> +{s.weight}</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {review.correlationAttemptedAt && (
+            <div style={{ fontSize: 10, color: T.stone400, marginTop: 8 }}>
+              Last correlated: {formatDate(review.correlationAttemptedAt)}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{
+          background: dk(isDark, T.stone50, D.bgSub),
+          border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+          borderRadius: 12, padding: '16px 20px', marginBottom: 20,
+        }}>
+          <div style={{ fontSize: 13, color: dk(isDark, T.stone500, D.textMuted), marginBottom: 4 }}>
+            No PR/MR has been correlated with this review yet.
+          </div>
+          {review.correlationAttemptedAt && (
+            <div style={{ fontSize: 11, color: T.stone400 }}>
+              Last attempted: {formatDate(review.correlationAttemptedAt)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Git context summary */}
+      {hasGitContext && review.gitContext && (
+        <div style={{
+          background: dk(isDark, T.stone50, D.bgSub),
+          border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+          borderRadius: 10, padding: '12px 16px', marginBottom: 20,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.stone400, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+            Git Context (captured at review creation)
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            {review.gitContext.branchName && (
+              <div>
+                <span style={{ fontSize: 10, color: T.stone400 }}>Branch: </span>
+                <code style={{ fontSize: 11 }}>{review.gitContext.branchName}</code>
+              </div>
+            )}
+            {review.gitContext.commitShortSha && (
+              <div>
+                <span style={{ fontSize: 10, color: T.stone400 }}>Commit: </span>
+                <code style={{ fontSize: 11 }}>{review.gitContext.commitShortSha}</code>
+              </div>
+            )}
+            {review.gitContext.baseBranch && (
+              <div>
+                <span style={{ fontSize: 10, color: T.stone400 }}>Base: </span>
+                <code style={{ fontSize: 11 }}>{review.gitContext.baseBranch}</code>
+              </div>
+            )}
+            {review.gitContext.commitMessage && (
+              <div style={{ flex: '1 0 100%' }}>
+                <span style={{ fontSize: 10, color: T.stone400 }}>Message: </span>
+                <span style={{ fontSize: 11, color: dk(isDark, T.stone600, D.textMuted) }}>{review.gitContext.commitMessage}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Correlation actions */}
+      <div style={{
+        background: dk(isDark, T.white, D.bgCard),
+        border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+        borderRadius: 10, padding: '16px 20px', marginBottom: 20,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: dk(isDark, T.stone800, D.text), marginBottom: 12 }}>
+          Auto-correlate
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <Button
+            icon={<SyncOutlined />}
+            loading={loading}
+            onClick={handleCorrelate}
+            style={{ borderRadius: 8 }}
+            type="primary"
+          >
+            {corPR ? 'Re-correlate PR' : 'Correlate PR'}
+          </Button>
+          <Button
+            icon={<BranchesOutlined />}
+            loading={loading}
+            onClick={handleLoadCandidates}
+            style={{ borderRadius: 8 }}
+          >
+            Load candidates
+          </Button>
+        </div>
+        {correlateError && (
+          <div style={{ fontSize: 12, color: T.red, marginTop: 4 }}>{correlateError}</div>
+        )}
+        <div style={{ fontSize: 11, color: T.stone400 }}>
+          Runs scoring against open PRs in the connected GitHub/GitLab integration using branch name, commit SHA, author, and time window.
+        </div>
+      </div>
+
+      {/* Manual link */}
+      <div style={{
+        background: dk(isDark, T.white, D.bgCard),
+        border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+        borderRadius: 10, padding: '16px 20px', marginBottom: 20,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: dk(isDark, T.stone800, D.text), marginBottom: 10 }}>
+          Link manually
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <Input
+            placeholder="https://github.com/org/repo/pull/123"
+            value={linkUrl}
+            onChange={e => setLinkUrl(e.target.value)}
+            onPressEnter={handleLinkManual}
+            style={{ borderRadius: 8, flex: 1 }}
+            prefix={<EditOutlined style={{ color: T.stone400 }} />}
+          />
+          <Button
+            icon={<CheckOutlined />}
+            type="primary"
+            loading={loading}
+            onClick={handleLinkManual}
+            style={{ borderRadius: 8, flexShrink: 0 }}
+          >
+            Link
+          </Button>
+        </div>
+        {linkError && (
+          <div style={{ fontSize: 12, color: T.red, marginTop: 6 }}>{linkError}</div>
+        )}
+      </div>
+
+      {/* Candidates */}
+      {candidatesLoaded && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: dk(isDark, T.stone800, D.text), marginBottom: 12 }}>
+            {candidates.length > 0
+              ? `Candidate PRs (${candidates.length}) — partial matches, score 40–59`
+              : 'No candidate PRs found'}
+          </div>
+          {candidates.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {candidates.map(c => (
+                <PRCandidateCard key={c.prUrl} pr={c} isDark={isDark} onLink={handleLinkCandidate} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type SectionId = 'overview' | 'questionnaire' | 'tasks' | 'attestations' | 'summary' | 'threat-model' | 'policies' | 'pr-correlation';
 
 interface NavItem {
   id: SectionId;
@@ -1362,6 +1744,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Policies',
     icon: <BookOutlined />,
     group: 'Compliance',
+  },
+  {
+    id: 'pr-correlation',
+    label: 'PR / MR Correlation',
+    icon: <BranchesOutlined />,
+    group: 'Integrations',
+    getBadge: (r) => r.correlatedPR ? { count: r.correlatedPR.correlationScore, color: T.green } : null,
   },
 ];
 
@@ -1601,13 +1990,14 @@ export function SecurityReviewDetailsPage() {
 
           {/* Scrollable content */}
           <div style={{ flex: 1, overflow: 'auto', padding: '24px 28px' }}>
-            {activeSection === 'overview'      && <OverviewSection      review={review} isDark={isDark} />}
-            {activeSection === 'questionnaire' && <QuestionnaireSection review={review} isDark={isDark} />}
-            {activeSection === 'tasks'         && <TasksSection         review={review} isDark={isDark} />}
-            {activeSection === 'attestations'  && <AttestationsSection  review={review} isDark={isDark} />}
-            {activeSection === 'summary'       && <SummarySection       review={review} summary={summary} isDark={isDark} />}
-            {activeSection === 'threat-model'  && <ThreatModelSection   review={review} isDark={isDark} />}
-            {activeSection === 'policies'      && <PoliciesSection      review={review} policies={policies} isDark={isDark} />}
+            {activeSection === 'overview'        && <OverviewSection      review={review} isDark={isDark} />}
+            {activeSection === 'questionnaire'   && <QuestionnaireSection review={review} isDark={isDark} />}
+            {activeSection === 'tasks'           && <TasksSection         review={review} isDark={isDark} />}
+            {activeSection === 'attestations'    && <AttestationsSection  review={review} isDark={isDark} />}
+            {activeSection === 'summary'         && <SummarySection       review={review} summary={summary} isDark={isDark} />}
+            {activeSection === 'threat-model'    && <ThreatModelSection   review={review} isDark={isDark} />}
+            {activeSection === 'policies'        && <PoliciesSection      review={review} policies={policies} isDark={isDark} />}
+            {activeSection === 'pr-correlation'  && <PRCorrelationSection review={review} isDark={isDark} onReviewUpdate={setReview} />}
           </div>
         </div>
       </div>

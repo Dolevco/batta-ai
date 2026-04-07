@@ -109,6 +109,31 @@ const TOOLS = [
             '(e.g. "https://github.com/org/repo/pull/42"). ' +
             'Must be an https:// URL.',
         },
+        gitContext: {
+          type: 'object',
+          description:
+            'Optional git metadata captured at review creation time from the local working tree. ' +
+            'Used to correlate this review with a PR/MR automatically. ' +
+            'Collect with: git rev-parse --abbrev-ref HEAD (branchName), ' +
+            'git rev-parse HEAD (commitSha), git log -1 --format="%s" (commitMessage), ' +
+            'git log -1 --format="%ae" (authorEmail), ' +
+            'git log -1 --format="%an" (authorName), ' +
+            'git log -1 --format="%aI" (commitTimestamp), ' +
+            'git rev-parse --abbrev-ref @{upstream} 2>/dev/null (baseBranch). ' +
+            'All fields are optional; provide as many as available.',
+          properties: {
+            branchName:       { type: 'string', description: 'Current feature/fix branch name.' },
+            commitSha:        { type: 'string', description: 'Full 40-character commit SHA of HEAD.' },
+            commitShortSha:   { type: 'string', description: 'First 7 characters of HEAD commit SHA.' },
+            authorEmail:      { type: 'string', description: 'Author email of HEAD commit (PII — stored encrypted).' },
+            authorName:       { type: 'string', description: 'Author name of HEAD commit (PII — stored encrypted).' },
+            commitMessage:    { type: 'string', description: 'Subject line of HEAD commit.' },
+            commitTimestamp:  { type: 'string', description: 'ISO 8601 timestamp of HEAD commit.' },
+            baseBranch:       { type: 'string', description: 'Upstream / target branch (e.g. main, master).' },
+            remoteUrl:        { type: 'string', description: 'Sanitised remote origin URL.' },
+          },
+          additionalProperties: false,
+        },
       },
       required: ['featureDescription','title', 'agentName'],
     },
@@ -366,6 +391,10 @@ async function handleTool(
             ? repository.trim().slice(0, 200)
             : undefined,
           prLink: sanitizedPrLink,
+          // gitContext is sanitised inside startReview via sanitiseGitContext()
+          gitContext: args.gitContext && typeof args.gitContext === 'object'
+            ? (args.gitContext as Record<string, unknown>)
+            : undefined,
         },
       );
       return JSON.stringify(review, null, 2);
