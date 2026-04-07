@@ -387,6 +387,31 @@ export class GitLabIntegration implements CodeIntegrationHandler {
   }
 
   /**
+   * List recently-updated MRs across all states, optionally since a given ISO timestamp.
+   * Used as a broad candidate pool when no commit SHA or branch name is available.
+   *
+   * Security: [Critical-3] — projectRef is resolved to a numeric id; `since` is
+   * encoded as a query parameter; no raw user input is concatenated.
+   */
+  public async listRecentMRs(
+    projectRef: string,
+    since?: string,
+    perPage = 50,
+  ): Promise<NormalisedPR[]> {
+    const pid = this.resolveProjectId(projectRef);
+    const sinceParam = since ? `&updated_after=${encodeURIComponent(since)}` : '';
+    try {
+      const mrs = await this.fetchJson<any[]>(
+        `/api/v4/projects/${pid}/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=${perPage}${sinceParam}`,
+      );
+      return mrs.map(mr => this.normaliseMR(mr, projectRef));
+    } catch {
+      // [Medium-12] Swallow upstream errors gracefully
+      return [];
+    }
+  }
+
+  /**
    * Fetch a single MR by iid.
    * Security: [Critical-3] — mrIid is an integer, no injection risk; projectRef is encoded.
    */

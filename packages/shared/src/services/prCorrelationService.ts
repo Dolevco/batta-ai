@@ -19,19 +19,21 @@
  * PII fields: authorEmail, authorName — stored but never logged.
  */
 
-import type { SecurityReview, ReviewGitContext, CorrelatedPR, NormalisedPR, CorrelationSignal } from '../types';
-import type { GitHubIntegration } from '../integrations/githubIntegration';
-import type { GitLabIntegration } from '../integrations/gitlabIntegration';
+import type { SecurityReview, ReviewGitContext, CorrelatedPR, NormalisedPR, CorrelationSignal, CodeIntegrationRepository } from '../types';
+import { GitHubIntegration } from '../integrations/githubIntegration';
+import { GitLabIntegration } from '../integrations/gitlabIntegration';
 
 // ── Scoring weights (must sum to ≤ 100) ─────────────────────────────────────
 
 const SIGNAL_WEIGHTS: Record<string, number> = {
-  commitSha:   50,
-  branchName:  25,
-  authorEmail: 10,
-  authorName:   5,
-  timeWindow:   5,
-  repository:   5,
+  commitSha:     50,
+  branchName:    20,
+  authorEmail:    8,
+  authorName:     4,
+  authorLogin:    4,
+  commitMessage:  5,
+  timeWindow:     5,
+  repository:     4,
 };
 
 const SCORE_STORE_THRESHOLD     = 60; // store as confirmed correlation
@@ -42,6 +44,23 @@ const SCORE_CANDIDATE_THRESHOLD = 40; // return as candidate (not stored)
 const BRANCH_NAME_RE = /^[a-zA-Z0-9._/\-]+$/;
 const SHA_RE         = /^[0-9a-f]{7,40}$/i;
 const EMAIL_RE       = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Tokenise a string into a set of lowercase meaningful words (≥ 3 chars).
+ * Used for fuzzy commit-message / PR-title matching.
+ * Stop words are excluded so that common filler words don't inflate the match score.
+ */
+const STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'this', 'from', 'that', 'feat', 'fix', 'chore', 'docs', 'test', 'refactor', 'add', 'update', 'remove', 'use']);
+
+function tokenise(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 3 && !STOP_WORDS.has(w)),
+  );
+}
 
 /**
  * Validate and sanitise all fields in a raw git context object.
@@ -114,6 +133,20 @@ export function sanitiseGitContext(raw: Record<string, unknown>): ReviewGitConte
   }
 
   return clean;
+}
+
+/**
+ * Derive a "since" ISO timestamp for broad PR scans when we have no definitive signals.
+ * Returns 72 hours before the commit timestamp, review createdAt, or the current time
+ * (whichever is available first), giving a window that covers any PR the developer might
+ * have opened around this work.
+ */
+function deriveSinceTimestamp(ctx: ReviewGitContext, reviewCreatedAt?: string): string {
+  const anchor =
+    ctx.commitTimestamp ? new Date(ctx.commitTimestamp).getTime() :
+    reviewCreatedAt     ? new Date(reviewCreatedAt).getTime() :
+    Date.now();
+  return new Date(anchor - 72 * 3_600_000).toISOString();
 }
 
 // ── Provider inference ────────────────────────────────────────────────────────
@@ -198,11 +231,47 @@ export function scorePR(
     if (matched) score += w;
   }
 
-  // authorName — case-insensitive (PII — never in log messages below)
-  if (ctx.authorName) {
-    const matched = pr.prAuthorLogin.toLowerCase() === ctx.authorName.toLowerCase();
+  // authorName — case-insensitive name-to-name comparison (PII — never in log messages)
+  // Falls back to review.humanResponsible when no git authorName is available.
+  const effectiveAuthorName = ctx.authorName ?? review.humanResponsible;
+  if (effectiveAuthorName) {
+    const matched = pr.prAuthorLogin.toLowerCase() === effectiveAuthorName.toLowerCase();
     const w = SIGNAL_WEIGHTS.authorName;
     signals.push({ signal: 'authorName', matched, weight: w });
+    if (matched) score += w;
+  }
+
+  // authorLogin — match review's authorName (or humanResponsible fallback) against the
+  // PR author login (handles the common case where the name is "Firstname Lastname" but
+  // GitHub/GitLab only exposes the login handle; we try normalised comparison of both).
+  if (effectiveAuthorName) {
+    // Normalise: lowercase, strip spaces/hyphens to compare "firstnamelastname" vs login
+    const normName = effectiveAuthorName.toLowerCase().replace(/[\s\-_]/g, '');
+    const normLogin = pr.prAuthorLogin.toLowerCase().replace(/[\s\-_]/g, '');
+    const matched = normName === normLogin || normLogin.includes(normName) || normName.includes(normLogin);
+    const w = SIGNAL_WEIGHTS.authorLogin;
+    signals.push({ signal: 'authorLogin', matched, weight: w });
+    if (matched) score += w;
+  }
+
+  // commitMessage — fuzzy match: check if the PR title contains significant words
+  // from the commit message subject (≥ 50% word overlap counts as a match).
+  // Falls back to review.title when no git commitMessage is available.
+  const effectiveTitle = ctx.commitMessage ?? review.title;
+  if (effectiveTitle) {
+    const prTitleWords = tokenise(pr.prTitle);
+    const msgWords = tokenise(effectiveTitle);
+    let overlap = 0;
+    msgWords.forEach(w => { if (prTitleWords.has(w)) overlap++; });
+    const total = msgWords.size;
+    const matched = total > 0 && overlap / total >= 0.5;
+    const w = SIGNAL_WEIGHTS.commitMessage;
+    signals.push({
+      signal: 'commitMessage',
+      matched,
+      weight: w,
+      detail: matched ? `${overlap}/${total} words match` : undefined,
+    });
     if (matched) score += w;
   }
 
@@ -228,15 +297,158 @@ export function scorePR(
   return { score: Math.min(100, score), signals };
 }
 
-// ── Integration wrapper types ─────────────────────────────────────────────────
+// ── Polymorphic PR integration interface ──────────────────────────────────────
 
-export interface CorrelationIntegration {
-  type: 'github' | 'gitlab';
-  github?: GitHubIntegration;
-  gitlab?: GitLabIntegration;
-  owner?: string;
-  repo?: string;
+/**
+ * Provider-agnostic interface used by the correlation service.
+ * Adapters for GitHub and GitLab implement this so the service
+ * contains zero provider-specific branching.
+ */
+export interface PRIntegration {
+  readonly provider: 'github' | 'gitlab';
+  /** Org / group owner hint — may be absent when unknown. */
+  readonly owner?: string;
+  /** Bare repository name hint — may be absent when unknown. */
+  readonly repo?: string;
+
+  listPRsForCommit(projectRef: string, sha: string): Promise<NormalisedPR[]>;
+  listPRsForBranch(projectRef: string, branch: string): Promise<NormalisedPR[]>;
+  listRecentPRs(projectRef: string, since: string, perPage?: number): Promise<NormalisedPR[]>;
+  getPR(projectRef: string, prNumber: number): Promise<NormalisedPR>;
+  /**
+   * Return all repositories accessible to this integration token.
+   * Each entry's `name` field is an "owner/repo" (or GitLab path) slug.
+   */
+  getRepositories(): Promise<CodeIntegrationRepository[]>;
+  /**
+   * Resolve the set of projectRef strings to search given an optional
+   * repository hint and an optional `repository` override from the review.
+   * When nothing is known, enumerate via getRepositories().
+   */
+  resolveProjectRefs(reviewRepository?: string): Promise<string[]>;
 }
+
+// ── GitHub adapter ────────────────────────────────────────────────────────────
+
+export class GitHubPRIntegration implements PRIntegration {
+  readonly provider = 'github' as const;
+
+  constructor(
+    private readonly gh: GitHubIntegration,
+    readonly owner?: string,
+    readonly repo?: string,
+  ) {}
+
+  listPRsForCommit(projectRef: string, sha: string): Promise<NormalisedPR[]> {
+    const { owner, repo } = splitRef(projectRef);
+    return this.gh.listPRsForCommit(owner, repo, sha);
+  }
+
+  listPRsForBranch(projectRef: string, branch: string): Promise<NormalisedPR[]> {
+    const { owner, repo } = splitRef(projectRef);
+    return this.gh.listPRsForBranch(owner, repo, branch);
+  }
+
+  listRecentPRs(projectRef: string, since: string, perPage?: number): Promise<NormalisedPR[]> {
+    const { owner, repo } = splitRef(projectRef);
+    return this.gh.listRecentPRs(owner, repo, since, perPage);
+  }
+
+  getPR(projectRef: string, prNumber: number): Promise<NormalisedPR> {
+    const { owner, repo } = splitRef(projectRef);
+    return this.gh.getPR(owner, repo, prNumber);
+  }
+
+  getRepositories(): Promise<CodeIntegrationRepository[]> {
+    return this.gh.getRepositories();
+  }
+
+  async resolveProjectRefs(reviewRepository?: string): Promise<string[]> {
+    if (this.owner && this.repo) {
+      return [`${this.owner}/${this.repo}`];
+    }
+
+    // Owner unknown — enumerate accessible repos, filter by bare repo name if we have one
+    try {
+      const accessible = await this.getRepositories();
+      return accessible
+        .map(r => r.name)
+        .filter(name => {
+          if (!name.includes('/')) return false;
+          const repoPart = name.split('/').slice(1).join('/');
+          // If repo name known, only keep matching repos
+          if (this.repo && repoPart.toLowerCase() !== this.repo.toLowerCase()) return false;
+          // If reviewRepository is a bare name, filter by it too
+          if (reviewRepository && !name.toLowerCase().includes(reviewRepository.toLowerCase())) return false;
+          return true;
+        });
+    } catch {
+      return [];
+    }
+  }
+}
+
+// ── GitLab adapter ────────────────────────────────────────────────────────────
+
+export class GitLabPRIntegration implements PRIntegration {
+  readonly provider = 'gitlab' as const;
+
+  constructor(
+    private readonly gl: GitLabIntegration,
+    readonly owner?: string,
+    readonly repo?: string,
+  ) {}
+
+  listPRsForCommit(projectRef: string, sha: string): Promise<NormalisedPR[]> {
+    return this.gl.listMRsForCommit(projectRef, sha);
+  }
+
+  listPRsForBranch(projectRef: string, branch: string): Promise<NormalisedPR[]> {
+    return this.gl.listMRsForBranch(projectRef, branch);
+  }
+
+  listRecentPRs(projectRef: string, since: string, perPage?: number): Promise<NormalisedPR[]> {
+    return this.gl.listRecentMRs(projectRef, since, perPage);
+  }
+
+  getPR(projectRef: string, prNumber: number): Promise<NormalisedPR> {
+    return this.gl.getMR(projectRef, prNumber);
+  }
+
+  getRepositories(): Promise<CodeIntegrationRepository[]> {
+    return this.gl.getRepositories();
+  }
+
+  async resolveProjectRefs(reviewRepository?: string): Promise<string[]> {
+    // Explicit owner/repo path
+    if (this.owner && this.repo) return [`${this.owner}/${this.repo}`];
+    // Known review repository (full path or bare name)
+    if (reviewRepository) return [reviewRepository];
+    // Bare repo name only
+    if (this.repo) return [this.repo];
+
+    // Nothing known — enumerate all accessible projects
+    try {
+      const accessible = await this.getRepositories();
+      return accessible.map(r => r.name).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Split an "owner/repo" projectRef string into its components. */
+function splitRef(ref: string): { owner: string; repo: string } {
+  const idx = ref.indexOf('/');
+  if (idx === -1) return { owner: '', repo: ref };
+  return { owner: ref.slice(0, idx), repo: ref.slice(idx + 1) };
+}
+
+// ── Legacy alias kept for callers that haven't migrated yet ──────────────────
+/** @deprecated Use PRIntegration instead */
+export type CorrelationIntegration = PRIntegration;
 
 // ── PRCorrelationService ──────────────────────────────────────────────────────
 
@@ -254,13 +466,28 @@ export class PRCorrelationService {
    */
   async correlatePR(
     review: SecurityReview,
-    integrations: CorrelationIntegration[],
+    integrations: PRIntegration[],
   ): Promise<{
     correlated: CorrelatedPR | null;
     candidates: CorrelatedPR[];
     error?: string;
   }> {
-    if (!review.gitContext?.branchName && !review.gitContext?.commitSha) {
+    // Allow correlation to proceed even with partial or absent git context.
+    // humanResponsible and title are available directly on the review and serve
+    // as fallback signals (authorLogin + commitMessage scoring) when git context
+    // was not captured. We only bail out when there is truly nothing to work with.
+    const ctx = review.gitContext ?? {};
+    const hasAnyContext =
+      ctx.commitSha ||
+      ctx.branchName ||
+      ctx.authorEmail ||
+      ctx.authorName ||
+      ctx.commitMessage ||
+      ctx.commitTimestamp ||
+      review.humanResponsible ||
+      review.title;
+
+    if (!hasAnyContext) {
       return { correlated: null, candidates: [], error: 'insufficient_git_context' };
     }
 
@@ -272,7 +499,7 @@ export class PRCorrelationService {
 
     for (const integration of integrations) {
       try {
-        const prs = await this.fetchCandidatePRs(review.gitContext, review.repository, integration);
+        const prs = await this.fetchCandidatePRs(ctx, review.repository, integration, review.createdAt);
         allPRs.push(...prs);
       } catch {
         // [Medium-12] Non-fatal — continue with other integrations; error surfaced generically
@@ -323,7 +550,7 @@ export class PRCorrelationService {
    */
   async fetchPRByUrl(
     prUrl: string,
-    integration: CorrelationIntegration,
+    integration: PRIntegration,
   ): Promise<CorrelatedPR> {
     const pr = await this.fetchSinglePRByUrl(prUrl, integration);
     return {
@@ -348,65 +575,76 @@ export class PRCorrelationService {
   /**
    * Fetch candidate PRs for a git context from a single integration.
    *
+   * Strategy (strongest signal first):
+   *   1. Commit SHA lookup — definitive, provider API.
+   *   2. Branch name lookup — exact head-branch match.
+   *   3. Broad time-window scan — fetches PRs updated within a 72-hour window around
+   *      the review's commitTimestamp (or review.createdAt as fallback) so softer
+   *      signals (author, title) can score them.
+   *
+   * Project references are resolved by the integration adapter via resolveProjectRefs().
+   * Results are deduplicated by PR URL before return.
+   *
    * Security: [Critical-3] — branch names and SHAs are passed to integration methods
    * that use encodeURIComponent internally; never interpolated raw.
    */
   async fetchCandidatePRs(
     gitContext: ReviewGitContext,
     repository: string | undefined,
-    integration: CorrelationIntegration,
+    integration: PRIntegration,
+    reviewCreatedAt?: string,
   ): Promise<NormalisedPR[]> {
+    const projectRefs = await integration.resolveProjectRefs(repository);
     const results: NormalisedPR[] = [];
 
-    if (integration.type === 'github' && integration.github && integration.owner && integration.repo) {
-      // Prefer commit SHA lookup (strongest signal) then branch lookup
+    for (const projectRef of projectRefs) {
+      const repoResults: NormalisedPR[] = [];
+
       if (gitContext.commitSha) {
         try {
-          const prs = await integration.github.listPRsForCommit(integration.owner, integration.repo, gitContext.commitSha);
-          results.push(...prs);
+          const prs = await integration.listPRsForCommit(projectRef, gitContext.commitSha);
+          repoResults.push(...prs);
         } catch {
           // [Medium-12] Swallow upstream errors; try branch fallback
         }
       }
-      if (gitContext.branchName && results.length === 0) {
+
+      if (gitContext.branchName && repoResults.length === 0) {
         try {
-          const prs = await integration.github.listPRsForBranch(integration.owner, integration.repo, gitContext.branchName);
-          results.push(...prs);
+          const prs = await integration.listPRsForBranch(projectRef, gitContext.branchName);
+          repoResults.push(...prs);
         } catch {
           // [Medium-12] Swallow upstream errors gracefully
         }
       }
-    }
 
-    if (integration.type === 'gitlab' && integration.gitlab) {
-      const projectRef = repository ?? (integration.owner && integration.repo ? `${integration.owner}/${integration.repo}` : '');
-      if (!projectRef) return results;
-
-      if (gitContext.commitSha) {
+      // Broad fallback: fetch recently-updated PRs when we have no definitive signals
+      if (repoResults.length === 0) {
         try {
-          const prs = await integration.gitlab.listMRsForCommit(projectRef, gitContext.commitSha);
-          results.push(...prs);
-        } catch {
-          // [Medium-12] Swallow upstream errors; try branch fallback
-        }
-      }
-      if (gitContext.branchName && results.length === 0) {
-        try {
-          const prs = await integration.gitlab.listMRsForBranch(projectRef, gitContext.branchName);
-          results.push(...prs);
+          const since = deriveSinceTimestamp(gitContext, reviewCreatedAt);
+          const prs = await integration.listRecentPRs(projectRef, since);
+          repoResults.push(...prs);
         } catch {
           // [Medium-12] Swallow upstream errors gracefully
         }
       }
+
+      results.push(...repoResults);
     }
 
-    return results;
+    // Deduplicate by PR URL in case multiple repo lookups overlap
+    const seen = new Set<string>();
+    return results.filter(pr => {
+      if (seen.has(pr.prUrl)) return false;
+      seen.add(pr.prUrl);
+      return true;
+    });
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
 
-  private async fetchSinglePRByUrl(prUrl: string, integration: CorrelationIntegration): Promise<NormalisedPR> {
-    // Parse pr number from URL: .../pull/42 or .../merge_requests/42
+  private async fetchSinglePRByUrl(prUrl: string, integration: PRIntegration): Promise<NormalisedPR> {
+    // Parse PR number from URL: .../pull/42 or .../merge_requests/42
     const match = prUrl.match(/\/(pull|merge_requests)\/(\d+)/);
     if (!match) {
       // [Medium-12] Generic error — do not expose URL content in messages
@@ -414,32 +652,19 @@ export class PRCorrelationService {
     }
     const prNumber = parseInt(match[2], 10);
 
-    if (integration.type === 'github' && integration.github && integration.owner && integration.repo) {
-      try {
-        return await integration.github.getPR(integration.owner, integration.repo, prNumber);
-      } catch {
-        throw new Error('PR fetch failed');
-      }
-    }
+    // For GitLab, parse the project path from the URL (e.g. /owner/repo/-/merge_requests/42)
+    // For GitHub, use owner/repo from the integration or parse from URL (.../owner/repo/pull/42)
+    try {
+      const url = new URL(prUrl);
+      // Strip trailing /pull/N or /-/merge_requests/N to get the project ref
+      const projectRef = url.pathname
+        .replace(/\/(pull|merge_requests)\/\d+.*$/, '')
+        .replace(/\/-$/, '')
+        .replace(/^\//, '');
 
-    if (integration.type === 'gitlab' && integration.gitlab) {
-      // Parse project path from URL
-      let projectRef: string;
-      try {
-        const url = new URL(prUrl);
-        // path: /owner/repo/-/merge_requests/42
-        const pathParts = url.pathname.split('/-/')[0].replace(/^\//, '');
-        projectRef = pathParts;
-      } catch {
-        throw new Error('PR fetch failed: cannot parse project path');
-      }
-      try {
-        return await integration.gitlab.getMR(projectRef, prNumber);
-      } catch {
-        throw new Error('PR fetch failed');
-      }
+      return await integration.getPR(projectRef, prNumber);
+    } catch (err) {
+      throw new Error('PR fetch failed: ' + (err instanceof Error ? err.message : String(err)));
     }
-
-    throw new Error('PR fetch failed: no matching integration');
   }
 }

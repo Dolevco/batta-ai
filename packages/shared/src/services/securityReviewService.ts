@@ -22,8 +22,8 @@ import type {
 import type { BusinessFeature } from '../types/business-feature.types';
 import type { FeatureService } from './featureService';
 import { BASE_QUESTIONS, TASK_RULES, BASELINE_TASKS } from './securityReviewDefaults';
-import { PRCorrelationService, sanitiseGitContext, parseRemoteUrl } from './prCorrelationService';
-import type { CorrelationIntegration } from './prCorrelationService';
+import { PRCorrelationService, sanitiseGitContext, parseRemoteUrl, GitHubPRIntegration, GitLabPRIntegration } from './prCorrelationService';
+import type { PRIntegration } from './prCorrelationService';
 import { GitHubIntegration } from '../integrations/githubIntegration';
 import { GitLabIntegration } from '../integrations/gitlabIntegration';
 import type { ICustomIntegrationRepository } from '../persistence/interfaces';
@@ -410,7 +410,7 @@ export class SecurityReviewService {
   private async resolveIntegrationsForReview(
     tenantId: string,
     review: SecurityReview,
-  ): Promise<CorrelationIntegration[]> {
+  ): Promise<PRIntegration[]> {
     if (!this.customIntegrationRepository) return [];
 
     let parsed: { provider: string; owner: string; repo: string; slug: string } = { provider: 'unknown', owner: '', repo: '', slug: '' };
@@ -426,7 +426,11 @@ export class SecurityReviewService {
       if (fromUrl.provider !== 'unknown') parsed = fromUrl;
     }
 
-    let integrations: CorrelationIntegration[] = [];
+    // Bare repo name (no owner in the slug): repo is the full review.repository value.
+    // Owner will be filled per-integration below from cfg.accountLogin / cfg.groupId.
+    const bareRepo = parsed.repo || review.repository || '';
+
+    const integrations: PRIntegration[] = [];
 
     try {
       const allIntegrations = await this.customIntegrationRepository.getAll(tenantId, true);
@@ -435,17 +439,18 @@ export class SecurityReviewService {
         const cfg = integration.config as Record<string, string>;
 
         // GitHub App installation
+        // cfg.accountLogin is the GitHub org/user that installed the App — use it as
+        // the owner fallback when review.repository is a bare name (not "org/repo").
         if (cfg.installationId) {
           const gh = new GitHubIntegration({
             tenantId,
             installationId: cfg.installationId,
           });
-          integrations.push({
-            type: 'github',
-            github: gh,
-            owner: parsed.owner || cfg.owner,
-            repo: parsed.repo || cfg.repo,
-          });
+          integrations.push(new GitHubPRIntegration(
+            gh,
+            parsed.owner || cfg.accountLogin || cfg.owner || review.humanResponsible,
+            bareRepo,
+          ));
         }
 
         // GitLab group access token
@@ -456,12 +461,11 @@ export class SecurityReviewService {
             groupId: cfg.groupId,
             baseUrl: cfg.baseUrl,
           });
-          integrations.push({
-            type: 'gitlab',
-            gitlab: gl,
-            owner: parsed.owner || cfg.groupId,
-            repo: parsed.repo,
-          });
+          integrations.push(new GitLabPRIntegration(
+            gl,
+            parsed.owner || cfg.groupId,
+            bareRepo,
+          ));
         }
       }
     } catch {

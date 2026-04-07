@@ -113,7 +113,7 @@ async function startServer() {
   });
   await policyTemplateRepository.initialize();
 
-  const securityReviewService = new SecurityReviewService(securityReviewRepository, featureService, policyTemplateRepository);
+  const securityReviewService = new SecurityReviewService(securityReviewRepository, featureService, policyTemplateRepository, customIntegrationRepository);
 
   const chatController = new ChatController(securityReviewService, featureService);
   const securityReviewController = new SecurityReviewController(securityReviewService);

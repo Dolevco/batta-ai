@@ -442,7 +442,16 @@ export interface ReviewGitContext {
 }
 
 export interface CorrelationSignal {
-  signal: 'branchName' | 'commitSha' | 'authorEmail' | 'authorName' | 'timeWindow' | 'repository' | 'manual';
+  signal:
+    | 'branchName'
+    | 'commitSha'
+    | 'authorEmail'
+    | 'authorName'
+    | 'authorLogin'
+    | 'commitMessage'
+    | 'timeWindow'
+    | 'repository'
+    | 'manual';
   matched: boolean;
   weight: number;               // contribution to correlationScore
   detail?: string;

@@ -456,6 +456,46 @@ export class GitHubIntegration implements CodeIntegrationHandler {
   }
 
   /**
+   * List recently-updated PRs (open + closed) updated since a given ISO timestamp.
+   * Used as a broad candidate pool when no commit SHA or branch name is available.
+   *
+   * Security: [Critical-3] — all parameters are passed as discrete octokit fields;
+   * no raw user input is interpolated into query strings.
+   */
+  public async listRecentPRs(
+    owner: string,
+    repo: string,
+    since?: string,
+    perPage = 50,
+  ): Promise<NormalisedPR[]> {
+    const token = await this.getAccessToken();
+    const octokit = new Octokit({ auth: token });
+    const results: NormalisedPR[] = [];
+
+    for (const state of ['open', 'closed'] as const) {
+      try {
+        const { data } = await octokit.rest.pulls.list({
+          owner,
+          repo,
+          state,
+          sort: 'updated',
+          direction: 'desc',
+          per_page: perPage,
+        });
+        // Filter client-side to the requested time window (GitHub list doesn't support `since` for PRs)
+        const filtered = since
+          ? data.filter(pr => new Date(pr.updated_at).getTime() >= new Date(since).getTime())
+          : data;
+        results.push(...filtered.map(pr => this.normalisePR(pr, `${owner}/${repo}`)));
+      } catch {
+        // [Medium-12] Swallow upstream errors; partial results returned
+      }
+    }
+
+    return results;
+  }
+
+  /**
    * Fetch a single PR by number.
    *
    * Security: [Critical-3] — owner, repo, pull_number are discrete octokit parameters.
