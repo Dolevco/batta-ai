@@ -38,6 +38,7 @@ export enum DataIndexerAgentType {
   ServiceDfdSynthesis   = 'service-dfd-synthesis',
   ServiceThreatModel    = 'service-threat-model',
   ExploitabilityAnalyzer = 'exploitability-analyzer',
+  PRValidation           = 'pr-validation',
 }
 
 // ── Definition re-exports ─────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ export { FEATURE_THREAT_MODEL_AGENT } from './definitions/featureThreatModelAgen
 export { SERVICE_DFD_SYNTHESIS_AGENT } from './definitions/serviceDfdSynthesisAgent';
 export { SERVICE_THREAT_MODEL_AGENT } from './definitions/serviceThreatModelAgent';
 export { EXPLOITABILITY_ANALYZER_AGENT } from './definitions/exploitabilityAnalyzerAgent';
+export { PR_VALIDATION_AGENT } from './definitions/prValidationAgent';
 
 // ── Registry factory ──────────────────────────────────────────────────────────
 
@@ -75,6 +77,7 @@ import { FEATURE_THREAT_MODEL_AGENT } from './definitions/featureThreatModelAgen
 import { SERVICE_DFD_SYNTHESIS_AGENT } from './definitions/serviceDfdSynthesisAgent';
 import { SERVICE_THREAT_MODEL_AGENT } from './definitions/serviceThreatModelAgent';
 import { EXPLOITABILITY_ANALYZER_AGENT } from './definitions/exploitabilityAnalyzerAgent';
+import { PR_VALIDATION_AGENT } from './definitions/prValidationAgent';
 
 /**
  * Create a fully-populated DataIndexerAgentRegistry bound to the given LLM clients.
@@ -98,5 +101,6 @@ export function createDataIndexerRegistry(api: ILLMApiHandler, smallApi?: ILLMAp
   registry.register(SERVICE_DFD_SYNTHESIS_AGENT);
   registry.register(SERVICE_THREAT_MODEL_AGENT);
   registry.register(EXPLOITABILITY_ANALYZER_AGENT);
+  registry.register(PR_VALIDATION_AGENT);
   return registry;
 }

@@ -70,6 +70,9 @@ export function createSecurityReviewRouter(controller: SecurityReviewController)
   router.get('/security-reviews/:id/pr-candidates', controller.getPRCandidates.bind(controller));
   router.put('/security-reviews/:id/correlated-pr', controller.linkPR.bind(controller));
 
+  // PR validation endpoint — reuses the same rate limiter as correlation
+  router.post('/security-reviews/:id/validate-pr', prCorrelationRateLimiter, controller.triggerPRValidation.bind(controller));
+
   return router;
 }
 

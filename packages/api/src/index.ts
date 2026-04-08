@@ -1,6 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { createTaskRepository, createChatMessageRepository, createMCPIntegrationRepository, createAgentRepository, createTaskRunRepository, createFeedbackRepository, createCustomIntegrationRepository, createSecurityReviewRepository, createPolicyTemplateRepository, getDatabaseConfig, SecurityReviewService, FeatureService, AssetService, createQdrantDataAdapter } from '@ai-agent/shared';
+import { createTaskRepository, createChatMessageRepository, createMCPIntegrationRepository, createAgentRepository, createTaskRunRepository, createFeedbackRepository, createCustomIntegrationRepository, createSecurityReviewRepository, createPolicyTemplateRepository, getDatabaseConfig, SecurityReviewService, FeatureService, AssetService, createQdrantDataAdapter, WorkerQueue } from '@ai-agent/shared';
 import { TaskService } from './services/taskService';
 import { AgentService } from './services/agentService';
 import { TaskController } from './controllers/taskController';
@@ -113,7 +113,7 @@ async function startServer() {
   });
   await policyTemplateRepository.initialize();
 
-  const securityReviewService = new SecurityReviewService(securityReviewRepository, featureService, policyTemplateRepository, customIntegrationRepository);
+  const securityReviewService = new SecurityReviewService(securityReviewRepository, featureService, policyTemplateRepository, customIntegrationRepository, taskRepository, new WorkerQueue());
 
   const chatController = new ChatController(securityReviewService, featureService);
   const securityReviewController = new SecurityReviewController(securityReviewService);

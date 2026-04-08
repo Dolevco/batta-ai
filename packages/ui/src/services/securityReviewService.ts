@@ -160,3 +160,23 @@ export async function linkPR(
   }
   return response.json();
 }
+
+/**
+ * POST /security-reviews/:id/validate-pr
+ * Trigger a background PR validation agent run for a review.
+ */
+export async function triggerPRValidation(
+  getToken: () => Promise<string | null>,
+  id: string,
+): Promise<SecurityReview> {
+  const response = await fetchWithAuth(
+    getToken,
+    `${API_BASE}/security-reviews/${encodeURIComponent(id)}/validate-pr`,
+    { method: 'POST', body: JSON.stringify({}) },
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as any).error ?? `Request failed (${response.status})`);
+  }
+  return response.json();
+}

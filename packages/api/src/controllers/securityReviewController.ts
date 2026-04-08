@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import type { SecurityReviewService } from '@ai-agent/shared';
 import type { SecurityReviewAnswer, SecurityAttestation, AttestationArchitectureUpdate } from '@ai-agent/shared';
+import { runPRValidationInProcess } from '../prValidationRunner';
 
 /**
  * Resolves the tenant ID for security review endpoints.
@@ -303,5 +304,47 @@ export class SecurityReviewController {
    */
   async refreshSnapshot(req: Request, res: Response): Promise<void> {
     res.status(501).json({ error: 'Threat model snapshot capture is not yet implemented' });
+  }
+
+  /**
+   * POST /security-reviews/:id/validate-pr
+   * Manually trigger PR validation for a review.
+   *
+   * The service validates inputs, sanitises answers, and marks the review as
+   * 'running'.  The agent then runs in-process (fire-and-forget) and persists the
+   * final PRValidationReport directly onto the review record.
+   *
+   * The client receives the 'running' review immediately and polls via GET until
+   * the status changes to 'completed' | 'failed'.
+   *
+   * Security:
+   *   [Critical-1] Tenant-scoped via resolveTenantId.
+   *   [High-6]     Rate-limited at route level (10 req/min per tenant).
+   */
+  async triggerPRValidation(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = resolveTenantId(req);
+      const { id } = req.params;
+
+      const { review, plan } = await this.service.triggerPRValidation(id, tenantId);
+
+      // Respond immediately with the review in 'running' state
+      res.json(review);
+
+      // Run the validation agent in-process, fire-and-forget.
+      // Any error is caught inside runPRValidationInProcess and written to the
+      // review record (status = 'failed') so the UI always gets a terminal state.
+      runPRValidationInProcess(plan).catch(err => {
+        console.error('[SecurityReview] triggerPRValidation in-process runner failed:', err);
+      });
+    } catch (error: any) {
+      const isNotFound  = error.message?.includes('not found');
+      const isBadRequest = error.message?.includes('No correlated PR') ||
+        error.message?.includes('No security answers');
+      console.error('[SecurityReview] triggerPRValidation error:', error);
+      res.status(isNotFound ? 404 : isBadRequest ? 400 : 500).json({
+        error: isNotFound ? error.message : isBadRequest ? error.message : 'Failed to trigger PR validation',
+      });
+    }
   }
 }

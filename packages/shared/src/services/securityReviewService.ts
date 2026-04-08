@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { ISecurityReviewRepository } from '../persistence/interfaces';
 import type { IPolicyTemplateRepository } from '../persistence/interfaces';
+import type { ITaskRepository } from '../persistence/interfaces';
 import type {
   SecurityReview,
   SecurityReviewQuestion,
@@ -27,6 +28,24 @@ import type { PRIntegration } from './prCorrelationService';
 import { GitHubIntegration } from '../integrations/githubIntegration';
 import { GitLabIntegration } from '../integrations/gitlabIntegration';
 import type { ICustomIntegrationRepository } from '../persistence/interfaces';
+import { WorkerQueue } from '../events/redis/workerQueue';
+
+// ── PR Validation payload ─────────────────────────────────────────────────────
+
+/**
+ * Sanitised plan returned by triggerPRValidation.
+ * Consumed directly by the API in-process runner (and, when re-enabled, by the worker).
+ */
+export interface PRValidationPayload {
+  reviewId: string;
+  tenantId: string;
+  questionsAndAnswers: Array<{
+    questionId: string;
+    questionText: string;
+    answer: string;
+  }>;
+  correlatedPR: Pick<CorrelatedPR, 'provider' | 'repository' | 'headBranch' | 'headSha' | 'baseBranch'>;
+}
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -39,6 +58,8 @@ export class SecurityReviewService {
     private featureService?: FeatureService,
     private policyRepository?: IPolicyTemplateRepository,
     private customIntegrationRepository?: ICustomIntegrationRepository,
+    private taskRepository?: ITaskRepository,
+    private workerQueue?: WorkerQueue,
   ) {
   }
 
@@ -291,6 +312,99 @@ export class SecurityReviewService {
       }
       return true;
     });
+  }
+
+  /**
+   * Manually trigger PR validation for a security review.
+   *
+   * Validates inputs, sanitises the Q&A payload, marks the review as 'running',
+   * and returns the sanitised plan so the caller can execute it directly in-process.
+   *
+   * NOTE: Worker-queue dispatch is temporarily disabled.
+   *       The API controller runs the agent in-process (fire-and-forget) instead.
+   *       To re-enable the worker path, uncomment the block labelled [WORKER-QUEUE]
+   *       and remove the in-process call from SecurityReviewController.
+   *
+   * Security:
+   *   [Critical-1]  Tenant-scoped — only the review owner can trigger.
+   *   [Critical-2]  Answers sanitised (control chars stripped, capped at 1 000 chars).
+   *   [High-6]      Rate-limiting enforced at the HTTP layer.
+   *   [Medium-11]   Mutation logged with tenantId and timestamp.
+   */
+  async triggerPRValidation(
+    reviewId: string,
+    tenantId: string,
+  ): Promise<{ review: SecurityReview; plan: PRValidationPayload }> {
+    const review = await this.requireReview(reviewId, tenantId);
+
+    if (!review.correlatedPR) {
+      throw new Error('No correlated PR — link a PR first');
+    }
+    if (!review.answers?.length) {
+      throw new Error('No security answers to validate');
+    }
+
+    // [Critical-2] Build sanitised Q&A payload
+    const questionsAndAnswers = review.answers.map(a => {
+      const q = review.questions.find(q => q.id === a.questionId);
+      return {
+        questionId:   a.questionId,
+        questionText: (q?.question ?? a.questionId).slice(0, 200),
+        answer:       this.sanitiseText(a.answer).slice(0, 1000),
+      };
+    });
+
+    /* [WORKER-QUEUE] — uncomment to re-enable background worker dispatch
+    if (!this.taskRepository || !this.workerQueue) {
+      throw new Error('Task queue not configured');
+    }
+    const taskId = uuidv4();
+    const runId  = uuidv4();
+    await this.taskRepository.create({
+      id:          taskId,
+      tenantId,
+      description: `PR validation for security review ${reviewId}`,
+      tools:       ['pr-validation'],
+      plan: {
+        agentType:           'pr-validation',
+        reviewId,
+        tenantId,
+        questionsAndAnswers,
+        correlatedPR:        review.correlatedPR,
+      } as any,
+      status:    'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await this.workerQueue.enqueue({ taskId, runId, tenantId });
+    */
+
+    // [Medium-11] Audit log — no PII
+    console.info(`[SecurityReview] triggerPRValidation: review=${reviewId} tenant=${tenantId} ts=${new Date().toISOString()}`);
+
+    // Mark the review as running immediately so the UI shows a spinner
+    const updatedReview = await this.repository.update(reviewId, tenantId, {
+      prValidationReport: {
+        status:          'running',
+        findings:        [],
+        additionalRisks: [],
+        filesReviewed:   0,
+        linesReviewed:   0,
+      },
+    });
+
+    const plan: PRValidationPayload = {
+      reviewId,
+      tenantId,
+      questionsAndAnswers,
+      correlatedPR: review.correlatedPR,
+    };
+
+    return { review: updatedReview, plan };
+  }
+
+  private sanitiseText(input: string): string {
+    return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   }
 
   /**

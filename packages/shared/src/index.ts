@@ -11,6 +11,7 @@ export * from './persistence/qdrantAgentRepository';
 export { AssetService } from './services/assetService';
 export type { AssetDetail, RelationshipNode, RelationshipEdge, RelationshipGraph, RepositoryArtifact, RepositoryArtifacts } from './services/assetService';
 export { SecurityReviewService } from './services/securityReviewService';
+export type { PRValidationPayload } from './services/securityReviewService';
 export { PolicyService } from './services/policyService';
 export { FeatureService, FEATURE_ANALYSES_COLLECTION } from './services/featureService';
 export type { FeatureSemanticSearchResult } from './services/featureService';

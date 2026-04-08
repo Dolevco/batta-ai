@@ -9,7 +9,7 @@ import {
   WarningOutlined, ApartmentOutlined,
   ApiOutlined, LinkOutlined, ThunderboltOutlined, BookOutlined,
   LockOutlined, RobotOutlined, GlobalOutlined, ArrowLeftOutlined,
-  GithubOutlined, BranchesOutlined, SyncOutlined, EditOutlined, CheckOutlined,
+  GithubOutlined, BranchesOutlined, SyncOutlined, EditOutlined, CheckOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import type {
@@ -100,7 +100,7 @@ function MetaRow({ label, children, isDark }: { label: string; children: React.R
 
 // ── Overview section ───────────────────────────────────────────────────────────
 
-function OverviewSection({ review, isDark }: { review: SecurityReview; isDark: boolean }) {
+function OverviewSection({ review, summary, isDark }: { review: SecurityReview; summary: SecurityReviewAttestationSummary | null; isDark: boolean }) {
   const navigate = useNavigate();
 
   const STEPS = [
@@ -212,6 +212,76 @@ function OverviewSection({ review, isDark }: { review: SecurityReview; isDark: b
         </div>
       )}
 
+      {/* Attestation summary inline — shown in overview once attested */}
+      {review.status === 'attested' && summary && (() => {
+        const pct = summary.totalTasks > 0 ? Math.round((summary.handledTasks / summary.totalTasks) * 100) : 100;
+        const isFullyCompliant = pct === 100 && summary.criticalUnhandledCount === 0;
+        const heroColor = isFullyCompliant ? T.green : summary.criticalUnhandledCount > 0 ? T.red : T.amber;
+        const heroBg = isFullyCompliant
+          ? dk(isDark, `linear-gradient(135deg, ${T.greenLight}, #DCFCE7)`, `linear-gradient(135deg, ${D.greenLight}, rgba(22,163,74,0.2))`)
+          : summary.criticalUnhandledCount > 0
+            ? dk(isDark, `linear-gradient(135deg, ${T.redLight}, #FFE4E6)`, `linear-gradient(135deg, ${D.redLight}, rgba(220,38,38,0.2))`)
+            : dk(isDark, `linear-gradient(135deg, ${T.amberLight}, #FEF9C3)`, `linear-gradient(135deg, ${D.amberLight}, rgba(217,119,6,0.2))`);
+        const heroBorder = isFullyCompliant
+          ? dk(isDark, T.greenBorder, D.greenBorder)
+          : summary.criticalUnhandledCount > 0
+            ? dk(isDark, T.redBorder, D.redBorder)
+            : dk(isDark, T.amberBorder, D.amberBorder);
+        return (
+          <div style={{
+            background: heroBg,
+            border: `1px solid ${heroBorder}`,
+            borderRadius: 12, padding: '18px 22px', marginBottom: 24,
+            display: 'flex', alignItems: 'center', gap: 16,
+          }}>
+            <div style={{
+              width: 46, height: 46, borderRadius: '50%', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: heroColor, color: '#fff', fontSize: 20,
+            }}>
+              {isFullyCompliant ? <CheckCircleOutlined /> : <ExclamationCircleOutlined />}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: heroColor }}>
+                {pct}% compliant
+              </div>
+              <div style={{ fontSize: 12, color: dk(isDark, T.stone600, D.textMuted), marginTop: 3 }}>
+                {isFullyCompliant
+                  ? 'All security tasks handled — this feature is cleared for merge.'
+                  : summary.criticalUnhandledCount > 0
+                    ? `${summary.criticalUnhandledCount} critical task${summary.criticalUnhandledCount > 1 ? 's' : ''} unresolved — review before merging.`
+                    : `${summary.unhandledTasks} task${summary.unhandledTasks > 1 ? 's' : ''} not fully handled — consider addressing before release.`
+                }
+              </div>
+              {summary.criticalUnhandled.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {summary.criticalUnhandled.map(t => (
+                    <span key={t.id} style={{
+                      fontSize: 11, padding: '1px 8px', borderRadius: 4,
+                      background: dk(isDark, T.redLight, D.redLight),
+                      border: `1px solid ${dk(isDark, T.redBorder, D.redBorder)}`,
+                      color: T.red,
+                    }}>
+                      ⚠ {t.title}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: T.green }}>{summary.handledTasks}</div>
+              <div style={{ fontSize: 10, color: T.stone400, textTransform: 'uppercase', letterSpacing: '0.05em' }}>handled</div>
+            </div>
+            {summary.unhandledTasks > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: T.red }}>{summary.unhandledTasks}</div>
+                <div style={{ fontSize: 10, color: T.stone400, textTransform: 'uppercase', letterSpacing: '0.05em' }}>not handled</div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Meta details */}
       <div style={{
         background: dk(isDark, T.white, D.bgCard),
@@ -277,7 +347,35 @@ function OverviewSection({ review, isDark }: { review: SecurityReview; isDark: b
           ) : '—'}
         </MetaRow>
         <MetaRow isDark={isDark} label="PR / MR Link">
-          {review.prLink ? (
+          {review.correlatedPR ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <a
+                href={review.correlatedPR.prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '2px 8px', borderRadius: 4, fontSize: 11,
+                  background: dk(isDark, T.blueLight, D.blueLight),
+                  border: `1px solid ${dk(isDark, T.blueBorder, D.blueBorder)}`,
+                  color: T.blue, textDecoration: 'none',
+                }}
+              >
+                <BranchesOutlined style={{ fontSize: 11 }} />
+                {review.correlatedPR.prTitle}
+                <span style={{ color: T.stone400, marginLeft: 2 }}>
+                  #{review.correlatedPR.prNumber}
+                </span>
+              </a>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <PRStateChip state={review.correlatedPR.prState} isDark={isDark} />
+                <CorrelationScoreBadge score={review.correlatedPR.correlationScore} isDark={isDark} />
+                <span style={{ fontSize: 10, color: T.stone400 }}>
+                  {review.correlatedPR.provider === 'github' ? 'GitHub' : 'GitLab'} · {review.correlatedPR.repository}
+                </span>
+              </div>
+            </div>
+          ) : review.prLink ? (
             <a
               href={review.prLink}
               target="_blank"
@@ -1390,6 +1488,327 @@ function PRCandidateCard({
   );
 }
 
+// ── PR Validation components ──────────────────────────────────────────────────
+
+type PRValidationOutcome = 'confirmed' | 'disputed' | 'unverifiable';
+type PRValidationOverallOutcome = 'clean' | 'attention' | 'critical';
+
+const OUTCOME_CONFIG: Record<PRValidationOutcome, { color: string; bg: string; border: string; label: string }> = {
+  confirmed:    { color: T.green,  bg: T.greenLight,  border: T.greenBorder,  label: 'Confirmed'    },
+  disputed:     { color: T.red,    bg: T.redLight,    border: T.redBorder,    label: 'Disputed'     },
+  unverifiable: { color: T.stone400, bg: T.stone100, border: T.stone300, label: 'Unverifiable' },
+};
+
+const OVERALL_OUTCOME_CONFIG: Record<PRValidationOverallOutcome, { color: string; label: string; icon: React.ReactNode }> = {
+  clean:     { color: T.green,  label: 'Clean',     icon: <CheckCircleOutlined /> },
+  attention: { color: T.amber,  label: 'Attention', icon: <WarningOutlined />     },
+  critical:  { color: T.red,    label: 'Critical',  icon: <CloseCircleOutlined /> },
+};
+
+function PRValidationReportCard({ report, isDark }: { report: any; isDark: boolean }) {
+  const navigate = useNavigate();
+
+  if (report.status === 'pending' || report.status === 'running') {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '16px 20px', borderRadius: 12,
+        background: dk(isDark, T.blueLight, D.blueLight),
+        border: `1px solid ${dk(isDark, T.blueBorder, D.blueBorder)}`,
+      }}>
+        <Spin />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: dk(isDark, T.stone800, D.text) }}>
+            Validation agent is running…
+          </div>
+          {report.taskRunId && (
+            <div style={{ fontSize: 11, color: T.stone400, marginTop: 2 }}>
+              <Button
+                type="link"
+                size="small"
+                icon={<EyeOutlined />}
+                style={{ padding: 0, fontSize: 11, height: 'auto' }}
+                onClick={() => navigate(`/execution/${report.taskRunId}`)}
+              >
+                View chain of thoughts
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (report.status === 'failed') {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="Validation failed"
+        description={report.errorMessage || 'An unexpected error occurred during PR validation.'}
+        style={{ borderRadius: 10 }}
+      />
+    );
+  }
+
+  if (report.status === 'skipped') {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="Validation was skipped"
+        style={{ borderRadius: 10 }}
+      />
+    );
+  }
+
+  // completed
+  const overall = report.overallOutcome as PRValidationOverallOutcome | undefined;
+  const overallCfg = overall ? OVERALL_OUTCOME_CONFIG[overall] : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Overall outcome + executive summary */}
+      <div style={{
+        padding: '16px 20px', borderRadius: 12,
+        background: dk(isDark, T.stone50, D.bgSub),
+        border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          {overallCfg && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '3px 10px', borderRadius: 20,
+              fontSize: 12, fontWeight: 700,
+              background: overallCfg.color, color: '#fff',
+            }}>
+              {overallCfg.icon} {overallCfg.label}
+            </span>
+          )}
+          <span style={{ fontSize: 11, color: T.stone400 }}>
+            {report.filesReviewed} files · {report.linesReviewed} lines reviewed
+          </span>
+          {report.validatedAt && (
+            <span style={{ fontSize: 11, color: T.stone400 }}>
+              · {formatDate(report.validatedAt)}
+            </span>
+          )}
+          {report.taskRunId && (
+            <Button
+              type="link"
+              size="small"
+              icon={<EyeOutlined />}
+              style={{ padding: 0, fontSize: 11, height: 'auto', marginLeft: 'auto' }}
+              onClick={() => navigate(`/execution/${report.taskRunId}`)}
+            >
+              View chain of thoughts
+            </Button>
+          )}
+        </div>
+        {report.executiveSummary && (
+          <p style={{ margin: 0, fontSize: 13, color: dk(isDark, T.stone700, D.textMuted), lineHeight: 1.6 }}>
+            {report.executiveSummary}
+          </p>
+        )}
+      </div>
+
+      {/* Per-finding cards — show ALL findings (confirmed, disputed, unverifiable) */}
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: T.stone400, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+          Security Answer Findings ({report.findings?.length ?? 0})
+        </div>
+        {(!report.findings || report.findings.length === 0) ? (
+          <div style={{
+            padding: '14px 18px', borderRadius: 10,
+            background: dk(isDark, T.greenLight, D.greenLight),
+            border: `1px solid ${dk(isDark, T.greenBorder, D.greenBorder)}`,
+            display: 'flex', gap: 10, alignItems: 'center',
+          }}>
+            <CheckCircleOutlined style={{ color: T.green, fontSize: 16 }} />
+            <span style={{ fontSize: 13, color: dk(isDark, T.stone700, D.textMuted) }}>
+              No individual findings reported — all security answers were validated as confirmed.
+            </span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {report.findings.map((f: any, i: number) => {
+              const cfg = OUTCOME_CONFIG[f.outcome as PRValidationOutcome] ?? OUTCOME_CONFIG.unverifiable;
+              return (
+                <div key={f.questionId ?? i} style={{
+                  padding: '12px 16px', borderRadius: 10,
+                  background: dk(isDark, cfg.bg, D.bgCard),
+                  border: `1px solid ${dk(isDark, cfg.border, D.borderSub)}`,
+                  borderLeft: `3px solid ${cfg.color}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                      background: cfg.color, color: '#fff', flexShrink: 0, marginTop: 1,
+                    }}>
+                      {cfg.label}
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: dk(isDark, T.stone800, D.text) }}>
+                      {f.questionText}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: dk(isDark, T.stone600, D.textMuted), marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>Agent answer: </span>{f.agentAnswer}
+                  </div>
+                  <div style={{ fontSize: 12, color: dk(isDark, T.stone600, D.textMuted), marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>Rationale: </span>{f.rationale}
+                  </div>
+                  {f.relevantFiles?.length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                      {f.relevantFiles.map((file: string) => (
+                        <code key={file} style={{
+                          fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                          background: dk(isDark, T.stone100, D.bgSub),
+                          color: dk(isDark, T.stone600, D.textMuted),
+                        }}>
+                          {file}
+                        </code>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Additional risks */}
+      {report.additionalRisks?.filter((r: any) => r.title?.trim() && r.description?.trim()).length > 0 && (
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.red, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+            Additional Risks Found ({report.additionalRisks.filter((r: any) => r.title?.trim() && r.description?.trim()).length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {report.additionalRisks.filter((r: any) => r.title?.trim() && r.description?.trim()).map((risk: any, i: number) => {
+              const sev = SEVERITY_CONFIG[risk.severity] ?? SEVERITY_CONFIG.low;
+              return (
+                <div key={i} style={{
+                  padding: '12px 16px', borderRadius: 10,
+                  background: dk(isDark, sev.bg, sev.darkBg),
+                  border: `1px solid ${dk(isDark, sev.border, sev.darkBorder)}`,
+                  borderLeft: `3px solid ${sev.color}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <SeverityBadge severity={risk.severity} isDark={isDark} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: dk(isDark, T.stone800, D.text) }}>
+                      {risk.title}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: dk(isDark, T.stone600, D.textMuted), marginBottom: 4 }}>
+                    {risk.description}
+                  </div>
+                  {risk.relevantFiles?.length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                      {risk.relevantFiles.map((file: string) => (
+                        <code key={file} style={{
+                          fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                          background: dk(isDark, T.stone100, D.bgSub),
+                          color: dk(isDark, T.stone600, D.textMuted),
+                        }}>
+                          {file}
+                        </code>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PRValidationSection({
+  review, isDark, onReviewUpdate,
+}: { review: SecurityReview; isDark: boolean; onReviewUpdate: (r: SecurityReview) => void }) {
+  const { triggerPRValidation, getReview } = useSecurityReviews();
+  const [error, setError] = useState<string | null>(null);
+  const [triggering, setTriggering] = useState(false);
+
+  // Poll every 5 s while pending/running
+  useEffect(() => {
+    const status = review.prValidationReport?.status;
+    if (status !== 'pending' && status !== 'running') return;
+    const intervalId = setInterval(async () => {
+      const fresh = await getReview(review.id).catch(() => null);
+      if (fresh) onReviewUpdate(fresh);
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, [review.id, review.prValidationReport?.status]);
+
+  const handleTrigger = async () => {
+    setError(null);
+    setTriggering(true);
+    try {
+      onReviewUpdate(await triggerPRValidation(review.id));
+    } catch (e: any) {
+      setError(e.message || 'Failed to trigger PR validation');
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const rpt = review.prValidationReport;
+  const busy = triggering;
+
+  return (
+    <div>
+      <SectionHeader
+        isDark={isDark}
+        title="PR Validation"
+        subtitle="Agent-powered verification of security answers against the actual PR branch"
+      />
+
+      {/* No PR linked */}
+      {!review.correlatedPR && (
+        <Alert
+          type="info"
+          showIcon
+          message="Link a PR in the PR / MR Correlation section first."
+          style={{ marginBottom: 16, borderRadius: 10 }}
+        />
+      )}
+
+      {/* Trigger button — only shown when PR is linked */}
+      {review.correlatedPR && (
+        <div style={{
+          background: dk(isDark, T.white, D.bgCard),
+          border: `1px solid ${dk(isDark, T.stone200, D.borderSub)}`,
+          borderRadius: 10, padding: '16px 20px', marginBottom: 20,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Button
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              loading={busy}
+              onClick={handleTrigger}
+              style={{ borderRadius: 8 }}
+            >
+              {rpt ? 'Re-run Validation' : 'Validate PR'}
+            </Button>
+            <span style={{ fontSize: 13, color: T.stone400 }}>
+              Clones the PR branch and verifies each security answer against the code.
+            </span>
+          </div>
+          {error && (
+            <div style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{error}</div>
+          )}
+        </div>
+      )}
+
+      {/* Report */}
+      {rpt && <PRValidationReportCard report={rpt} isDark={isDark} />}
+    </div>
+  );
+}
+
 function PRCorrelationSection({
   review, isDark, onReviewUpdate,
 }: { review: SecurityReview; isDark: boolean; onReviewUpdate: (r: SecurityReview) => void }) {
@@ -1670,7 +2089,7 @@ function PRCorrelationSection({
   );
 }
 
-type SectionId = 'overview' | 'questionnaire' | 'tasks' | 'attestations' | 'summary' | 'threat-model' | 'policies' | 'pr-correlation';
+type SectionId = 'overview' | 'questionnaire' | 'tasks' | 'attestations' | 'summary' | 'threat-model' | 'policies' | 'pr-correlation' | 'pr-validation';
 
 interface NavItem {
   id: SectionId;
@@ -1751,6 +2170,25 @@ const NAV_ITEMS: NavItem[] = [
     icon: <BranchesOutlined />,
     group: 'Integrations',
     getBadge: (r) => r.correlatedPR ? { count: r.correlatedPR.correlationScore, color: T.green } : null,
+  },
+  {
+    id: 'pr-validation',
+    label: 'PR Validation',
+    icon: <ThunderboltOutlined />,
+    group: 'Integrations',
+    getBadge: (r) => {
+      const rpt = r.prValidationReport;
+      if (!rpt || rpt.status !== 'completed') return null;
+      const issues = rpt.findings.filter((f: any) => f.outcome === 'disputed').length + rpt.additionalRisks.filter((r: any) => r.title?.trim() && r.description?.trim()).length;
+      if (issues === 0) {
+        // Clean — only show green badge if there are confirmed findings to advertise
+        const confirmed = rpt.findings.filter((f: any) => f.outcome === 'confirmed').length;
+        return confirmed > 0 ? { count: confirmed, color: T.green } : null;
+      }
+      const color = rpt.overallOutcome === 'critical' ? T.red
+                  : rpt.overallOutcome === 'attention' ? T.amber : T.green;
+      return { count: issues, color };
+    },
   },
 ];
 
@@ -1990,7 +2428,7 @@ export function SecurityReviewDetailsPage() {
 
           {/* Scrollable content */}
           <div style={{ flex: 1, overflow: 'auto', padding: '24px 28px' }}>
-            {activeSection === 'overview'        && <OverviewSection      review={review} isDark={isDark} />}
+            {activeSection === 'overview'        && <OverviewSection      review={review} summary={summary} isDark={isDark} />}
             {activeSection === 'questionnaire'   && <QuestionnaireSection review={review} isDark={isDark} />}
             {activeSection === 'tasks'           && <TasksSection         review={review} isDark={isDark} />}
             {activeSection === 'attestations'    && <AttestationsSection  review={review} isDark={isDark} />}
@@ -1998,6 +2436,7 @@ export function SecurityReviewDetailsPage() {
             {activeSection === 'threat-model'    && <ThreatModelSection   review={review} isDark={isDark} />}
             {activeSection === 'policies'        && <PoliciesSection      review={review} policies={policies} isDark={isDark} />}
             {activeSection === 'pr-correlation'  && <PRCorrelationSection review={review} isDark={isDark} onReviewUpdate={setReview} />}
+            {activeSection === 'pr-validation'   && <PRValidationSection  review={review} isDark={isDark} onReviewUpdate={setReview} />}
           </div>
         </div>
       </div>

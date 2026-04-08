@@ -156,6 +156,17 @@ export interface CodeIntegrationHandler extends CustomIntegrationHandler {
   getCodingTools: (config: GitToolConfig) => Tool[];
   getAccessToken: () => Promise<string>;
   getRepositories: () => Promise<CodeIntegrationRepository[]>;
+  /**
+   * Resolve the HEAD commit SHA of a repository's default (or specified) branch
+   * without cloning the repo.  Used by the orchestrator to skip enqueueing
+   * repos that have no new commits since the last completed IndexingRun.
+   *
+   * Security: repoUrl is the internal URL from the integration config, not
+   * user-supplied input.  Implementations must validate it before use.
+   *
+   * @returns the 40-character hex SHA, or undefined if the API call fails.
+   */
+  getHeadCommitSha?: (repoUrl: string, branch?: string) => Promise<string | undefined>;
 }
 
 export interface CodeIntegrationRepository {
@@ -457,6 +468,41 @@ export interface CorrelationSignal {
   detail?: string;
 }
 
+// ── PR Validation Types ───────────────────────────────────────────────────────
+
+export type PRValidationStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+export type PRValidationOutcome = 'confirmed' | 'disputed' | 'unverifiable';
+export type PRValidationOverallOutcome = 'clean' | 'attention' | 'critical';
+
+export interface PRValidationFinding {
+  questionId: string;
+  questionText: string;
+  agentAnswer: string;        // capped at 1000 chars
+  outcome: PRValidationOutcome;
+  rationale: string;
+  relevantFiles: string[];
+}
+
+export interface PRValidationAdditionalRisk {
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  title: string;
+  description: string;
+  relevantFiles: string[];
+}
+
+export interface PRValidationReport {
+  status: PRValidationStatus;
+  taskRunId?: string;
+  overallOutcome?: PRValidationOverallOutcome;
+  executiveSummary?: string;
+  findings: PRValidationFinding[];
+  additionalRisks: PRValidationAdditionalRisk[];
+  filesReviewed: number;
+  linesReviewed: number;
+  validatedAt?: string;
+  errorMessage?: string;
+}
+
 /** Correlated PR or MR data resolved from GitHub / GitLab.
  * Data classification: INTERNAL
  */
@@ -568,6 +614,9 @@ export interface SecurityReview {
 
   /** When the PR correlation was last attempted (ISO 8601). */
   correlationAttemptedAt?: string;
+
+  /** PR validation report produced by the pr-validation agent. */
+  prValidationReport?: PRValidationReport;
 }
 
 // ── Overview / Dashboard Types ─────────────────────────────────────────────────

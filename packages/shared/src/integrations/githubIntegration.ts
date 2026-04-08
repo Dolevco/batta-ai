@@ -415,6 +415,40 @@ export class GitHubIntegration implements CodeIntegrationHandler {
   // ── PR correlation methods ────────────────────────────────────────────────
 
   /**
+   * Resolve the HEAD commit SHA of a repository branch via the GitHub API.
+   * Used by the orchestrator to skip enqueueing repos with no new commits.
+   *
+   * Security: repoUrl comes from the internal integration config. owner/repo
+   * are extracted from the URL and passed as discrete Octokit fields — never
+   * shell-interpolated.  The returned SHA is validated against the 40-char hex
+   * format before being stored.
+   */
+  public async getHeadCommitSha(repoUrl: string, branch?: string): Promise<string | undefined> {
+    try {
+      // Parse owner/repo from the HTTPS URL, e.g. https://github.com/owner/repo
+      const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/|$)/);
+      if (!match) return undefined;
+      const [, owner, repo] = match;
+
+      const token = await this.getAccessToken();
+      const octokit = new Octokit({ auth: token });
+
+      // Fall back to the repo's default branch if none supplied
+      const ref = branch ?? (await octokit.rest.repos.get({ owner, repo })).data.default_branch;
+
+      const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch: ref });
+      const sha = data.commit?.sha;
+
+      // Security: validate format before returning — prevents downstream injection
+      if (sha && /^[0-9a-f]{40}$/i.test(sha)) return sha;
+      return undefined;
+    } catch {
+      // Network / auth failures are non-fatal — caller falls back to full enqueue
+      return undefined;
+    }
+  }
+
+  /**
    * List open and closed PRs for a branch.
    *
    * Security: [Critical-3] — owner, repo, and branch are passed as discrete parameters

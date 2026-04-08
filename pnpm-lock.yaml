@@ -340,6 +340,9 @@ importers:
       '@ai-agent/core':
         specifier: workspace:*
         version: link:../core
+      '@ai-agent/data-indexer':
+        specifier: workspace:*
+        version: link:../data-indexer
       '@ai-agent/shared':
         specifier: workspace:*
         version: link:../shared

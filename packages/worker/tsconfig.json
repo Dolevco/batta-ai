@@ -12,5 +12,6 @@
   "references": [
     { "path": "../core" },
     { "path": "../shared" },
+    { "path": "../data-indexer" }
   ]
 }

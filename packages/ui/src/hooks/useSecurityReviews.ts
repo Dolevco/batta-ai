@@ -189,6 +189,23 @@ export function useSecurityReviews() {
     [acquireToken],
   );
 
+  const triggerPRValidation = useCallback(
+    async (id: string): Promise<SecurityReview> => {
+      setLoading(true);
+      setError(null);
+      try {
+        return await securityReviewService.triggerPRValidation(acquireToken, id);
+      } catch (err: any) {
+        const msg = err.message ?? 'Failed to trigger PR validation';
+        setError(msg);
+        throw new Error(msg);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [acquireToken],
+  );
+
   return {
     loading,
     error,
@@ -203,5 +220,6 @@ export function useSecurityReviews() {
     correlatePR,
     getPRCandidates,
     linkPR,
+    triggerPRValidation,
   };
 }

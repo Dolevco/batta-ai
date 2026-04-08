@@ -814,6 +814,41 @@ export interface CorrelatedPR {
   correlationSignals: CorrelationSignal[];
 }
 
+// ── PR Validation Types ────────────────────────────────────────────────────────
+
+export type PRValidationStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+export type PRValidationOutcome = 'confirmed' | 'disputed' | 'unverifiable';
+export type PRValidationOverallOutcome = 'clean' | 'attention' | 'critical';
+
+export interface PRValidationFinding {
+  questionId: string;
+  questionText: string;
+  agentAnswer: string;
+  outcome: PRValidationOutcome;
+  rationale: string;
+  relevantFiles: string[];
+}
+
+export interface PRValidationAdditionalRisk {
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  title: string;
+  description: string;
+  relevantFiles: string[];
+}
+
+export interface PRValidationReport {
+  status: PRValidationStatus;
+  taskRunId?: string;
+  overallOutcome?: PRValidationOverallOutcome;
+  executiveSummary?: string;
+  findings: PRValidationFinding[];
+  additionalRisks: PRValidationAdditionalRisk[];
+  filesReviewed: number;
+  linesReviewed: number;
+  validatedAt?: string;
+  errorMessage?: string;
+}
+
 export interface SecurityReview {
   id: string;
   tenantId: string;
@@ -865,6 +900,8 @@ export interface SecurityReview {
   correlatedPR?: CorrelatedPR;
   /** When the PR correlation was last attempted (ISO 8601). */
   correlationAttemptedAt?: string;
+  /** PR validation report produced by the pr-validation agent. */
+  prValidationReport?: PRValidationReport;
 }
 
 export interface SecurityReviewAttestationSummary {

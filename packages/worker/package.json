@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ai-agent/core": "workspace:*",
+    "@ai-agent/data-indexer": "workspace:*",
     "@ai-agent/shared": "workspace:*",
     "dotenv": "^16.3.1",
     "redis": "^4.6.0",

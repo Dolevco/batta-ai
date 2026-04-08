@@ -7,6 +7,8 @@ import {
   initializePlannedTask,
   cleanupPlannedTask
 } from '@ai-agent/shared';
+import { executePRValidation } from './prValidationExecutor';
+import type { PRValidationPlan } from './prValidationExecutor';
 
 export async function executeTask(context: TaskExecutionContext): Promise<any> {
   const { task, taskRun, tenantId, redisPublisher } = context;
@@ -14,8 +16,29 @@ export async function executeTask(context: TaskExecutionContext): Promise<any> {
   if (!task.plan) {
     throw new Error('Task has no plan to execute');
   }
-  
-  // Initialize chain of thoughts
+
+  // ── PR Validation fast-path ───────────────────────────────────────────────
+  // Detected before generic plan execution to avoid MCP/PlannedTask overhead.
+  if ((task.plan as any).agentType === 'pr-validation') {
+    const plan = task.plan as unknown as PRValidationPlan;
+
+    // Bootstrap LLM client (same env vars as the generic path)
+    const result = await initializePlannedTask({
+      usePlanningAssistantMode: false,
+      mcpIntegrations: [],
+      customIntegrationRepository: createCustomIntegrationRepository(),
+      tenantId,
+      enableChainOfThoughts: false,
+    });
+
+    try {
+      await executePRValidation(plan, result.apiClient);
+      return { success: true };
+    } finally {
+      await cleanupPlannedTask(result);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
   const chainOfThoughts: ChainThoughtEvent[] = [];
   context.chainOfThoughts = chainOfThoughts;
   

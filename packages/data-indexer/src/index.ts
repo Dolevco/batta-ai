@@ -43,6 +43,9 @@ export type { IntegrationFetcherConfig, FetchedIntegrations } from './services/i
 export { RepositorySetup } from './services/repository-setup';
 export type { RepositorySetupConfig } from './services/repository-setup';
 
+// Agent registry — used by the worker for pr-validation and future background agents
+export { DataIndexerAgentRegistry, DataIndexerAgentType, createDataIndexerRegistry } from './agents';
+
 // Queue types
 export * from './types/queue.types';
 
