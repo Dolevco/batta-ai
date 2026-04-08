@@ -11,6 +11,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/worker/package.json ./packages/worker/
 COPY packages/core/package.json ./packages/core/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/data-indexer/package.json ./packages/data-indexer/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
@@ -19,11 +20,13 @@ RUN pnpm install --frozen-lockfile
 COPY packages/worker ./packages/worker
 COPY packages/core ./packages/core
 COPY packages/shared ./packages/shared
+COPY packages/data-indexer ./packages/data-indexer
 COPY tsconfig.json ./
 
 # Build packages
 RUN pnpm --filter @ai-agent/core build
 RUN pnpm --filter @ai-agent/shared build
+RUN pnpm --filter @ai-agent/data-indexer build
 RUN pnpm --filter @ai-agent/worker build
 
 # Production stage
@@ -42,6 +45,7 @@ COPY --from=base /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml 
 COPY --from=base /app/packages/worker/package.json ./packages/worker/
 COPY --from=base /app/packages/core/package.json ./packages/core/
 COPY --from=base /app/packages/shared/package.json ./packages/shared/
+COPY --from=base /app/packages/data-indexer/package.json ./packages/data-indexer/
 
 # Install production dependencies only
 RUN pnpm install --frozen-lockfile --prod
@@ -50,6 +54,7 @@ RUN pnpm install --frozen-lockfile --prod
 COPY --from=base /app/packages/worker/dist ./packages/worker/dist
 COPY --from=base /app/packages/core/dist ./packages/core/dist
 COPY --from=base /app/packages/shared/dist ./packages/shared/dist
+COPY --from=base /app/packages/data-indexer/dist ./packages/data-indexer/dist
 
 # Set working directory to worker
 WORKDIR /app/packages/worker

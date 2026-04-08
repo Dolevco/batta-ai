@@ -27,20 +27,23 @@ export class DeterministicIdGenerator implements EntityIdGenerator {
   /**
    * Generate a deterministic relationship ID
    * Format: rel:<hash>
+   *
+   * NOTE: validFrom is intentionally excluded from the key so that re-indexing
+   * the same logical relationship (same tenant/type/source/target) produces the
+   * same ID and the Neo4j MERGE upserts instead of creating a duplicate edge.
    */
   generateRelationshipId(
     tenantId: TenantId,
     type: string,
     sourceId: string,
     targetId: string,
-    validFrom: string
+    _validFrom?: string
   ): string {
     const keyString = this.normalizeKey({
       tenantId,
       type,
       sourceId,
       targetId,
-      validFrom,
     });
     const hash = this.hash(keyString);
     return `rel:${hash}`;
@@ -155,14 +158,13 @@ export class EntityIdUtils {
     type: string,
     sourceId: string,
     targetId: string,
-    validFrom: string
+    _validFrom?: string
   ): string {
     return this.generator.generateRelationshipId(
       tenantId,
       type,
       sourceId,
       targetId,
-      validFrom
     );
   }
 

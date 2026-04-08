@@ -131,6 +131,14 @@ export class CodeTransformationStage implements TransformationStage {
         evidence.push(this.createBuildArtifactEvidence(entity.id, build, now));
         buildMap.set(build.name, entity.id);
 
+        // Create CONTAINS relationship from repo to build artifact
+        const buildRepoId = repoMap.get(build.repository);
+        if (buildRepoId) {
+          relationships.push(
+            this.createRelationship('CONTAINS', buildRepoId, entity.id, now)
+          );
+        }
+
         // Create BUILDS relationships
         const serviceId = build.serviceId;
         if (serviceId) {
@@ -156,6 +164,14 @@ export class CodeTransformationStage implements TransformationStage {
         entities.push(entity);
         evidence.push(this.createDeploymentArtifactEvidence(entity.id, deployment, now));
         deploymentMap.set(deployment.name, entity.id);
+
+        // Create CONTAINS relationship from repo to deployment artifact
+        const deployRepoId = repoMap.get(deployment.repository);
+        if (deployRepoId) {
+          relationships.push(
+            this.createRelationship('CONTAINS', deployRepoId, entity.id, now)
+          );
+        }
 
         // Create DEPLOYS relationships if services are specified in metadata
         if (deployment.metadata?.services && Array.isArray(deployment.metadata.services)) {

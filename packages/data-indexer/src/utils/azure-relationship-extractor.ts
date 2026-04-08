@@ -566,16 +566,18 @@ function toCanonicalRelationship(
 }
 
 /**
- * Generate deterministic relationship ID
+ * Generate deterministic relationship ID.
+ * validFrom is excluded so that re-indexing the same logical relationship
+ * produces the same ID and results in an upsert rather than a duplicate edge.
  */
 function generateRelationshipId(
   tenantId: TenantId,
   type: RelationshipType,
   sourceId: EntityId,
   targetId: EntityId,
-  validFrom: string
+  _validFrom?: string
 ): EntityId {
-  const input = `${tenantId}:${type}:${sourceId}:${targetId}:${validFrom}`;
+  const input = `${tenantId}:${type}:${sourceId}:${targetId}`;
   return crypto.createHash('sha256').update(input).digest('hex');
 }
 

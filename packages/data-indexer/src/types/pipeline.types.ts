@@ -389,7 +389,7 @@ export interface EntityIdGenerator {
     type: string,
     sourceId: string,
     targetId: string,
-    validFrom: string
+    validFrom?: string
   ): string;
   
   generateContentHash(content: string): string;
