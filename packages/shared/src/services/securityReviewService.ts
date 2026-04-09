@@ -44,7 +44,7 @@ export interface PRValidationPayload {
     questionText: string;
     answer: string;
   }>;
-  correlatedPR: Pick<CorrelatedPR, 'provider' | 'repository' | 'headBranch' | 'headSha' | 'baseBranch'>;
+  correlatedPR: Pick<CorrelatedPR, 'provider' | 'repository' | 'prNumber' | 'headBranch' | 'headSha' | 'baseBranch'>;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────

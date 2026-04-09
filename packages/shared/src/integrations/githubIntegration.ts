@@ -351,6 +351,31 @@ export class GitHubIntegration implements CodeIntegrationHandler {
     };
   }
 
+  // ── PR comment ────────────────────────────────────────────────────────────
+
+  /**
+   * Post a comment on a PR.
+   *
+   * Security: owner, repo, and issue_number are discrete Octokit parameters —
+   * never shell-interpolated. body is plain Markdown composed from internal
+   * report data only; no user input is included.
+   */
+  public async postPRComment(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    body: string,
+  ): Promise<void> {
+    const token = await this.getAccessToken();
+    const octokit = new Octokit({ auth: token });
+    await octokit.rest.issues.createComment({
+      owner,
+      repo,
+      issue_number: prNumber,
+      body,
+    });
+  }
+
   // Generate or return cached installation access token
   public async getAccessToken(): Promise<string> {
     const now = Date.now();

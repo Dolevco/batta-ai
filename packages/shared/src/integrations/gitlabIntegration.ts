@@ -352,6 +352,27 @@ export class GitLabIntegration implements CodeIntegrationHandler {
     };
   }
 
+  // ─── PR comment ──────────────────────────────────────────────────────────
+
+  /**
+   * Post a comment on an MR.
+   *
+   * Security: projectRef is resolved to a numeric id; mrIid is an integer;
+   * body is plain Markdown composed from internal report data only — no user
+   * input is interpolated.
+   */
+  public async postPRComment(
+    projectRef: string,
+    mrIid: number,
+    body: string,
+  ): Promise<void> {
+    const pid = this.resolveProjectId(projectRef);
+    await this.postJson(
+      `/api/v4/projects/${pid}/merge_requests/${mrIid}/notes`,
+      { body },
+    );
+  }
+
   // ─── MR correlation methods ───────────────────────────────────────────────
 
   /**

@@ -21,7 +21,7 @@ import {
   GitHubIntegration,
   GitLabIntegration,
 } from '@ai-agent/shared';
-import type { PRValidationReport, CustomIntegration } from '@ai-agent/shared';
+import type { PRValidationReport, CustomIntegration, PRValidationAdditionalRisk, PRValidationFinding } from '@ai-agent/shared';
 import type { ILLMApiHandler } from '@ai-agent/core';
 
 export interface PRValidationPlan {
@@ -36,6 +36,7 @@ export interface PRValidationPlan {
   correlatedPR: {
     provider: 'github' | 'gitlab';
     repository: string;
+    prNumber: number;
     headBranch: string;
     headSha: string;
     baseBranch: string;
@@ -129,6 +130,102 @@ function formatValidationInput(
   ].join('\n');
 }
 
+// ── PR comment ────────────────────────────────────────────────────────────────
+
+const OUTCOME_EMOJI: Record<string, string> = {
+  clean:     '✅',
+  attention: '⚠️',
+  critical:  '🚨',
+};
+
+/**
+ * Build the Markdown comment body for a completed PR validation.
+ *
+ * Security: all values come from the internally-generated PRValidationReport;
+ * no user-controlled input is interpolated. Strings are length-capped to
+ * prevent oversized comments from being rejected by the provider API.
+ */
+function buildCommentBody(
+  report: PRValidationReport,
+  reviewId: string,
+  correlatedPR: PRValidationPlan['correlatedPR'],
+): string {
+  const outcome  = report.overallOutcome ?? 'unknown';
+  const emoji    = OUTCOME_EMOJI[outcome] ?? '🔍';
+  const summary  = (report.executiveSummary ?? 'No summary available.').slice(0, 500);
+
+  const confirmed    = report.findings.filter((f: PRValidationFinding) => f.outcome === 'confirmed').length;
+  const disputed     = report.findings.filter((f: PRValidationFinding) => f.outcome === 'disputed').length;
+  const unverifiable = report.findings.filter((f: PRValidationFinding) => f.outcome === 'unverifiable').length;
+  const total        = report.findings.length;
+
+  const additionalRisks = report.additionalRisks.length > 0
+    ? report.additionalRisks
+        .slice(0, 5)
+        .map((r: PRValidationAdditionalRisk) => `- **[${r.severity.toUpperCase()}]** ${r.title.slice(0, 200)}`)
+        .join('\n')
+    : '_None identified._';
+
+  const baseUrl   = (process.env.UI_BASE_URL ?? '').replace(/\/$/, '');
+  const reviewUrl = baseUrl
+    ? `${baseUrl}/security-reviews/${reviewId}`
+    : `_(review ID: ${reviewId})_`;
+
+  return [
+    `## ${emoji} Security Review — PR Validation`,
+    '',
+    `**Outcome:** ${outcome.toUpperCase()}`,
+    '',
+    summary,
+    '',
+    '### Findings',
+    `| Status | Count |`,
+    `|--------|-------|`,
+    `| ✅ Confirmed    | ${confirmed} / ${total} |`,
+    `| ❌ Disputed     | ${disputed} / ${total} |`,
+    `| ❓ Unverifiable | ${unverifiable} / ${total} |`,
+    '',
+    '### Additional Risks',
+    additionalRisks,
+    '',
+    `**Files reviewed:** ${report.filesReviewed} · **Lines reviewed:** ${report.linesReviewed}`,
+    '',
+    `🔗 [View full security review](${reviewUrl})`,
+    '',
+    `_Validated against \`${correlatedPR.headSha.slice(0, 7)}\` on ${correlatedPR.headBranch}_`,
+  ].join('\n');
+}
+
+/**
+ * Post the validation summary as a comment on the correlated PR/MR.
+ * Errors are caught and logged; a comment failure never propagates to the caller.
+ */
+async function postValidationComment(
+  plan: PRValidationPlan,
+  report: PRValidationReport,
+): Promise<void> {
+  try {
+    const integration = await resolveIntegration(plan.tenantId, plan.correlatedPR.provider);
+    const body = buildCommentBody(report, plan.reviewId, plan.correlatedPR);
+
+    if (plan.correlatedPR.provider === 'github') {
+      const [owner, repo] = plan.correlatedPR.repository.split('/');
+      await (integration as GitHubIntegration).postPRComment(owner, repo, plan.correlatedPR.prNumber, body);
+    } else {
+      await (integration as GitLabIntegration).postPRComment(
+        plan.correlatedPR.repository,
+        plan.correlatedPR.prNumber,
+        body,
+      );
+    }
+
+    console.log(`[PRValidation] Comment posted: review=${plan.reviewId} pr=${plan.correlatedPR.prNumber}`);
+  } catch (err: any) {
+    // Non-fatal: comment failure must not fail the validation run
+    console.error(`[PRValidation] Failed to post comment: review=${plan.reviewId}:`, err?.message ?? err);
+  }
+}
+
 /**
  * Execute a pr-validation task.
  *
@@ -202,6 +299,9 @@ export async function executePRValidation(
     await securityReviewRepo.update(reviewId, tenantId, { prValidationReport: report });
 
     console.log(`[PRValidation] Completed: review=${reviewId} outcome=${report.overallOutcome ?? 'unknown'}`);
+
+    // 8. Post a summary comment on the PR/MR (best-effort; never blocks the run)
+    await postValidationComment(plan, report);
   } catch (err: any) {
     console.error(`[PRValidation] Failed: review=${reviewId}:`, err);
 
