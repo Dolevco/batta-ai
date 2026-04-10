@@ -30,6 +30,8 @@ export enum DataIndexerAgentType {
   ServiceFileMapper        = 'service-file-mapper',
   ServiceSkeletonExtractor = 'service-skeleton-extractor',
   ServiceExternalSurface   = 'service-external-surface',
+  // ── Usage extraction pipeline ─────────────────────────────────────────────
+  UsageExtractor        = 'usage-extractor',
   // ── Legacy (kept for backward compat; orchestration now uses 3-pass) ──────
   ServiceAnalyzer       = 'service-analyzer',
   FeatureListExtractor  = 'feature-list-extractor',
@@ -50,6 +52,7 @@ export { SCRIPT_ANALYZER_AGENT, createScriptAnalyzerAgentWithRepository } from '
 export { SERVICE_FILE_MAPPER_AGENT } from './definitions/serviceFileMapperAgent';
 export { SERVICE_SKELETON_EXTRACTOR_AGENT } from './definitions/serviceSkeletonExtractorAgent';
 export { SERVICE_EXTERNAL_SURFACE_AGENT } from './definitions/serviceExternalSurfaceAgent';
+export { USAGE_EXTRACTOR_AGENT } from './definitions/usageExtractorAgent';
 export { SERVICE_ANALYZER_AGENT } from './definitions/serviceAnalyzerAgent';
 export { FEATURE_LIST_EXTRACTOR_AGENT } from './definitions/featureListExtractorAgent';
 export { DFD_EXTRACTOR_AGENT } from './definitions/dfdExtractorAgent';
@@ -70,6 +73,7 @@ import { SCRIPT_ANALYZER_AGENT } from './definitions/scriptAnalyzerAgent';
 import { SERVICE_FILE_MAPPER_AGENT } from './definitions/serviceFileMapperAgent';
 import { SERVICE_SKELETON_EXTRACTOR_AGENT } from './definitions/serviceSkeletonExtractorAgent';
 import { SERVICE_EXTERNAL_SURFACE_AGENT } from './definitions/serviceExternalSurfaceAgent';
+import { USAGE_EXTRACTOR_AGENT } from './definitions/usageExtractorAgent';
 import { SERVICE_ANALYZER_AGENT } from './definitions/serviceAnalyzerAgent';
 import { FEATURE_LIST_EXTRACTOR_AGENT } from './definitions/featureListExtractorAgent';
 import { DFD_EXTRACTOR_AGENT } from './definitions/dfdExtractorAgent';
@@ -94,6 +98,7 @@ export function createDataIndexerRegistry(api: ILLMApiHandler, smallApi?: ILLMAp
   registry.register(SERVICE_FILE_MAPPER_AGENT);
   registry.register(SERVICE_SKELETON_EXTRACTOR_AGENT);
   registry.register(SERVICE_EXTERNAL_SURFACE_AGENT);
+  registry.register(USAGE_EXTRACTOR_AGENT);
   registry.register(SERVICE_ANALYZER_AGENT);
   registry.register(FEATURE_LIST_EXTRACTOR_AGENT);
   registry.register(DFD_EXTRACTOR_AGENT);
