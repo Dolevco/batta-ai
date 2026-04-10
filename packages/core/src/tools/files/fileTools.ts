@@ -3,7 +3,8 @@ import { validatePath, ensureDirectoryExists, writeFile, searchFilesRecursive, i
 import * as path from 'path';
 import { promises as fs } from 'fs';
 import { ToolCategory, ToolParameter, ToolResult } from '../types';
-import { InsertContentParams, ListFilesParams, ReadFileParams, SearchAndReplaceOptions, SearchFilesParams, WriteFileParams } from './types';
+import { InsertContentParams, ListFilesParams, PreviewFileParams, ReadFileParams, SearchAndReplaceOptions, SearchFilesParams, WriteFileParams } from './types';
+import { FileSummarizerFactory, FileSummary } from './summarizers/index';
 
 export const FilesCategory: ToolCategory = {
   name: 'files',
@@ -746,6 +747,58 @@ export class ReplaceInFileTool extends BaseTool<any> {
           error: error instanceof Error ? this.sanitizeWorkspacePathFromMessage(error.message) : 'Unknown error occurred'
         };
       }
+    });
+  }
+}
+
+export class PreviewFileTool extends BaseTool<PreviewFileParams> {
+  name = 'preview_file';
+  category = FilesCategory;
+  description =
+    'Returns a structural skeleton of a file — symbol names, line numbers, and metadata — ' +
+    'without loading full content. Use this before read_file when you need to locate a specific ' +
+    'function or assess whether a file is relevant. Best for exploration tasks and files over ~80 lines; for shorter ' +
+    'files just use read_file.';
+  isConcurrencySafe = true;
+
+  getActivityDescription(params: PreviewFileParams): string {
+    return `Previewing ${params.path}`;
+  }
+
+  parameters: ToolParameter[] = [
+    {
+      name: 'path',
+      description: 'File path to preview',
+      required: true,
+      type: 'string',
+    },
+  ];
+
+  async execute(params: PreviewFileParams): Promise<ToolResult> {
+    return this.wrapExecution(params, async () => {
+      // Security: validatePath rejects any path that escapes the workspace directory
+      const filePath = validatePath(params.path, this.workspacePath);
+      const content = await fs.readFile(filePath, 'utf-8');
+      const stat = await fs.stat(filePath);
+
+      const ext = path.extname(filePath);
+      const summarizer = FileSummarizerFactory.get(ext);
+      const items = summarizer.summarize(content);
+      const totalLines = content.split('\n').length;
+
+      const summary: FileSummary = {
+        file: getRelativePath(filePath, this.workspacePath),
+        type: summarizer.languageLabel,
+        total_lines: totalLines,
+        last_modified: stat.mtime.toISOString().slice(0, 10),
+        items,
+      };
+
+      return {
+        success: true,
+        message: `Previewed ${summary.file} — ${summary.total_lines} lines, ${items.length} items`,
+        result: summary,
+      };
     });
   }
 }
