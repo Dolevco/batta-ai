@@ -30,8 +30,6 @@ export enum DataIndexerAgentType {
   ServiceFileMapper        = 'service-file-mapper',
   ServiceSkeletonExtractor = 'service-skeleton-extractor',
   ServiceExternalSurface   = 'service-external-surface',
-  // ── Usage extraction pipeline ─────────────────────────────────────────────
-  UsageExtractor        = 'usage-extractor',
   // ── Legacy (kept for backward compat; orchestration now uses 3-pass) ──────
   ServiceAnalyzer       = 'service-analyzer',
   FeatureListExtractor  = 'feature-list-extractor',
