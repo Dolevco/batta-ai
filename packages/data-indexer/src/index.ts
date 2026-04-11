@@ -45,7 +45,6 @@ export type { RepositorySetupConfig } from './services/repository-setup';
 
 // Agent registry — used by the worker for pr-validation and future background agents
 export { DataIndexerAgentRegistry, DataIndexerAgentType, createDataIndexerRegistry } from './agents';
-export { USAGE_EXTRACTOR_AGENT } from './agents/definitions/usageExtractorAgent';
 export type {
   UsageExtractionOutput,
   APIConsumerCall,
