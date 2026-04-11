@@ -47,3 +47,7 @@ export type SearchAndReplaceOptions = {
   start_line?: number;
   end_line?: number;
 };
+
+export type PreviewFileParams = {
+  path: string;
+};

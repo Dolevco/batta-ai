@@ -1,8 +1,9 @@
 import { ToolConfig } from "../types";
-import { DeleteFileTool, InsertContentTool, ListFilesTool, ReadFileTool, ReplaceContentTool, ReplaceInFileTool, SearchAndReplaceTool, SearchFilesTool, WriteFileTool } from "./fileTools";
+import { DeleteFileTool, InsertContentTool, ListFilesTool, PreviewFileTool, ReadFileTool, ReplaceContentTool, ReplaceInFileTool, SearchAndReplaceTool, SearchFilesTool, WriteFileTool } from "./fileTools";
 
 export const createFileTools = (config: ToolConfig) => {
   return [
+    new PreviewFileTool(config),
     new ReadFileTool(config),
     new WriteFileTool(config),
     new SearchFilesTool(config),
@@ -17,6 +18,7 @@ export const createFileTools = (config: ToolConfig) => {
 
 export const createReadOnlyFileTools = (config: ToolConfig) => {
   return [
+    new PreviewFileTool(config),
     new ReadFileTool(config),
     new SearchFilesTool(config),
     new ListFilesTool(config),
