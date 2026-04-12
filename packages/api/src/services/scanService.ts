@@ -19,7 +19,7 @@
 
 import { AzureOpenAIClient } from '@ai-agent/core';
 import { IntegrationFetcher, RepositoryTaskProcessor, TaskType, CodeDiscoveryStage, QueueManager, CodeIndexingOrchestrator } from '@ai-agent/data-indexer';
-import { createIndexingRunRepository, createQdrantDataAdapter, Neo4jAdapter } from '@ai-agent/shared';
+import { createIndexingRunRepository, createQdrantDataAdapter, createEmbeddingClient, Neo4jAdapter } from '@ai-agent/shared';
 
 export type ScanStatus = 'queued' | 'running' | 'completed' | 'failed';
 
@@ -351,7 +351,7 @@ async function runOrchestrationStream(
     emit();
 
 
-    const qdrantAdapter = createQdrantDataAdapter();
+    const qdrantAdapter = createQdrantDataAdapter(createEmbeddingClient());
     let neo4jAdapter: any;
     if (process.env.NEO4J_URI) {
       neo4jAdapter = new Neo4jAdapter({
@@ -361,13 +361,16 @@ async function runOrchestrationStream(
       });
     }
 
+    const useManagedIdentity = process.env.AZURE_OPENAI_AUTH !== 'use_llm_provider_key';
+
     let llmApi: any;
     try {
       llmApi = new AzureOpenAIClient({
         endpoint: process.env.AZURE_OPENAI_ENDPOINT || '',
-        apiKey: process.env.AZURE_OPENAI_API_KEY || '',
+        apiKey: useManagedIdentity ? undefined : (process.env.AZURE_OPENAI_API_KEY || ''),
         deploymentName: process.env.AZURE_OPENAI_DEPLOYMENT || '',
         apiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-12-01-preview',
+        useManagedIdentity,
       });
     } catch (llmErr) {
       // LLM is optional (semantic analysis + correlation will be skipped)
@@ -379,9 +382,10 @@ async function runOrchestrationStream(
     try {
       smallLLMApi = new AzureOpenAIClient({
         endpoint: process.env.AZURE_OPENAI_ENDPOINT || '',
-        apiKey: process.env.AZURE_OPENAI_API_KEY || '',
+        apiKey: useManagedIdentity ? undefined : (process.env.AZURE_OPENAI_API_KEY || ''),
         deploymentName: process.env.AZURE_OPENAI_SMALL_DEPLOYMENT || '',
         apiVersion: process.env.AZURE_OPENAI_SMALL_API_VERSION || process.env.AZURE_OPENAI_API_VERSION || '2024-12-01-preview',
+        useManagedIdentity,
       });
     } catch (llmErr) {
       // LLM is optional (semantic analysis + correlation will be skipped)

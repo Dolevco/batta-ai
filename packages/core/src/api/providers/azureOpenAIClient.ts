@@ -1,13 +1,20 @@
 import { AzureOpenAI } from 'openai';
+import { DefaultAzureCredential, getBearerTokenProvider } from '@azure/identity';
 import { Message } from '../../task/types';
 import { CompletionResponse, ILLMApiHandler, StreamChunk } from '..';
 
 export interface AzureConfig {
   endpoint: string;
-  apiKey: string;
+  /** Required when useManagedIdentity is false (API key mode). */
+  apiKey?: string;
   deploymentName: string;
   highReasoningEffort?: boolean;
   apiVersion?: string;
+  /**
+   * When true (default), authenticate via Azure Managed Identity using DefaultAzureCredential.
+   * Set to false to authenticate with an API key (apiKey must be provided).
+   */
+  useManagedIdentity?: boolean;
 }
 
 // Models that only support the Responses API (not Chat Completions)
@@ -29,11 +36,32 @@ export class AzureOpenAIClient implements ILLMApiHandler {
     this.useResponsesApi = requiresResponsesApi(config.deploymentName);
     this.completionRequestOptions = this.getRequestOptions(config.deploymentName, !!config.highReasoningEffort);
 
-    this.client = new AzureOpenAI({
-      apiKey: config.apiKey,
-      endpoint: config.endpoint,
-      apiVersion: config.apiVersion
-    });
+    const useManagedIdentity = config.useManagedIdentity ?? true;
+
+    if (useManagedIdentity) {
+      const credential = new DefaultAzureCredential();
+      const azureADTokenProvider = getBearerTokenProvider(
+        credential,
+        'https://cognitiveservices.azure.com/.default'
+      );
+      // Pass apiKey: '' to suppress the SDK's automatic AZURE_OPENAI_API_KEY env-var default,
+      // which would otherwise conflict with azureADTokenProvider (they are mutually exclusive).
+      this.client = new AzureOpenAI({
+        azureADTokenProvider,
+        apiKey: '',
+        endpoint: config.endpoint,
+        apiVersion: config.apiVersion,
+      });
+    } else {
+      if (!config.apiKey) {
+        throw new Error('apiKey is required when useManagedIdentity is false');
+      }
+      this.client = new AzureOpenAI({
+        apiKey: config.apiKey,
+        endpoint: config.endpoint,
+        apiVersion: config.apiVersion,
+      });
+    }
   }
 
   // Retry config

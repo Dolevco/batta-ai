@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { createChatTask } from '../services/chatTaskFactory';
-import { AzureOpenAIClient, } from '@ai-agent/core';
+import { AzureOpenAIClient, IEmbeddingHandler } from '@ai-agent/core';
 import type { SecurityReviewService, FeatureService } from '@ai-agent/shared';
 
 interface ChatRequest {
@@ -15,6 +15,7 @@ export class ChatController {
   constructor(
     private readonly securityReviewService: SecurityReviewService,
     private readonly featureService: FeatureService,
+    private readonly embeddingClient: IEmbeddingHandler,
   ) {}
 
   /**
@@ -59,24 +60,28 @@ export class ChatController {
       };
 
       try {
+        const useManagedIdentity = process.env.AZURE_OPENAI_AUTH !== 'use_llm_provider_key';
+
         // Validate Azure OpenAI configuration
-        if (!process.env.AZURE_OPENAI_ENDPOINT || 
-            !process.env.AZURE_OPENAI_API_KEY || 
-            !process.env.AZURE_OPENAI_DEPLOYMENT) {
+        if (!process.env.AZURE_OPENAI_ENDPOINT || !process.env.AZURE_OPENAI_DEPLOYMENT) {
           throw new Error('Missing required Azure OpenAI environment variables');
         }
+        if (!useManagedIdentity && !process.env.AZURE_OPENAI_API_KEY) {
+          throw new Error('AZURE_OPENAI_API_KEY is required when AZURE_OPENAI_AUTH=use_llm_provider_key');
+        }
 
-        // Create API client
         const apiClient = new AzureOpenAIClient({
           endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-          apiKey: process.env.AZURE_OPENAI_API_KEY,
+          apiKey: useManagedIdentity ? undefined : process.env.AZURE_OPENAI_API_KEY,
           deploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
           apiVersion: process.env.AZURE_OPENAI_API_VERSION,
+          useManagedIdentity,
         });
 
         // Create task with security review and feature tools
         const task = await createChatTask({
           apiClient,
+          embeddingClient: this.embeddingClient,
           securityReviewService: this.securityReviewService,
           featureService: this.featureService,
           tenantId,

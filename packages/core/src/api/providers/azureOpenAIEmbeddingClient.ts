@@ -1,12 +1,19 @@
 import { AzureOpenAI } from 'openai';
+import { DefaultAzureCredential, getBearerTokenProvider } from '@azure/identity';
 import { EmbeddingResponse, IEmbeddingHandler } from '..';
 
 export interface AzureEmbeddingConfig {
   endpoint: string;
-  apiKey: string;
+  /** Required when useManagedIdentity is false (API key mode). */
+  apiKey?: string;
   deploymentName: string;
   apiVersion?: string;
   dimension?: number;
+  /**
+   * When true (default), authenticate via Azure Managed Identity using DefaultAzureCredential.
+   * Set to false to authenticate with an API key (apiKey must be provided).
+   */
+  useManagedIdentity?: boolean;
 }
 
 export class AzureOpenAIEmbeddingClient implements IEmbeddingHandler {
@@ -18,11 +25,32 @@ export class AzureOpenAIEmbeddingClient implements IEmbeddingHandler {
     this.deploymentName = config.deploymentName;
     this.dimension = config.dimension || 1536;
 
-    this.client = new AzureOpenAI({
-      apiKey: config.apiKey,
-      endpoint: config.endpoint,
-      apiVersion: config.apiVersion,
-    });
+    const useManagedIdentity = config.useManagedIdentity ?? true;
+
+    if (useManagedIdentity) {
+      const credential = new DefaultAzureCredential();
+      const azureADTokenProvider = getBearerTokenProvider(
+        credential,
+        'https://cognitiveservices.azure.com/.default'
+      );
+      // Pass apiKey: '' to suppress the SDK's automatic AZURE_OPENAI_API_KEY env-var default,
+      // which would otherwise conflict with azureADTokenProvider (they are mutually exclusive).
+      this.client = new AzureOpenAI({
+        azureADTokenProvider,
+        apiKey: '',
+        endpoint: config.endpoint,
+        apiVersion: config.apiVersion,
+      });
+    } else {
+      if (!config.apiKey) {
+        throw new Error('apiKey is required when useManagedIdentity is false');
+      }
+      this.client = new AzureOpenAI({
+        apiKey: config.apiKey,
+        endpoint: config.endpoint,
+        apiVersion: config.apiVersion,
+      });
+    }
   }
 
   async createEmbedding(text: string): Promise<EmbeddingResponse> {

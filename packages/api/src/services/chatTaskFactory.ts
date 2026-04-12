@@ -1,10 +1,11 @@
-import { AzureOpenAIClient, AzureOpenAIEmbeddingClient, ChatTask, MODES, Tool, createChatCompletionTool } from '@ai-agent/core';
+import { AzureOpenAIClient, IEmbeddingHandler, ChatTask, MODES, Tool, createChatCompletionTool } from '@ai-agent/core';
 import { Neo4jAdapter, QdrantAdapter, SecurityQueryTools, createSecurityQueryTools, SecurityReviewService, FeatureService } from '@ai-agent/shared';
 import { createSecurityChatTools } from './chatSecurityReviewTools';
 import { createKnowledgeBaseChatTools } from './chatKnowledgeBaseTools';
 
 interface ChatTaskConfig {
   apiClient: AzureOpenAIClient;
+  embeddingClient: IEmbeddingHandler;
   securityReviewService: SecurityReviewService;
   featureService: FeatureService;
   tenantId: string;
@@ -20,7 +21,7 @@ interface ChatTaskConfig {
  *  - Infrastructure graph tools (securityQueryTools) when Neo4j + Qdrant are configured
  */
 export async function createChatTask(config: ChatTaskConfig): Promise<ChatTask> {
-  const { apiClient, securityReviewService, featureService, tenantId, conversationHistory = [] } = config;
+  const { apiClient, embeddingClient, securityReviewService, featureService, tenantId, conversationHistory = [] } = config;
 
   const tools: Tool[] = [];
 
@@ -38,15 +39,7 @@ export async function createChatTask(config: ChatTaskConfig): Promise<ChatTask> 
         password: process.env.NEO4J_PASSWORD || 'password'
       });
 
-      // Initialize embedding client for Qdrant
-      const embeddingClient = new AzureOpenAIEmbeddingClient({
-        endpoint: (process.env.AZURE_OPENAI_EMBEDDING_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT)!,
-        apiKey: (process.env.AZURE_OPENAI_EMBEDDING_API_KEY || process.env.AZURE_OPENAI_API_KEY)!,
-        deploymentName: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT || 'text-embedding-ada-002',
-        apiVersion: process.env.AZURE_OPENAI_EMBEDDING_API_VERSION,
-      });
-
-      // Initialize Qdrant adapter
+      // Initialize Qdrant adapter using the shared embedding client
       const qdrant = new QdrantAdapter({
         url: process.env.QDRANT_URL,
         apiKey: process.env.QDRANT_API_KEY,

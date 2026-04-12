@@ -6,7 +6,7 @@ import { AgentController } from '../controllers/agentController';
 import { FeedbackController } from '../controllers/feedbackController';
 import { BuiltInIntegrationController } from '../controllers/builtInIntegrationController';
 import { ChatController } from '../controllers/chatController';
-import { AssetService, createCustomIntegrationRepository, createQdrantDataAdapter, Neo4jAdapter, FeatureService, createIndexingRunRepository } from '@ai-agent/shared';
+import { AssetService, createCustomIntegrationRepository, createQdrantDataAdapter, createEmbeddingClient, Neo4jAdapter, FeatureService, createIndexingRunRepository } from '@ai-agent/shared';
 import { CustomIntegrationController } from '../controllers/customIntegrationController';
 import { IntegrationsController } from '../controllers/integrationsController';
 import { SlackOAuthController } from '../controllers/slackOAuthController';
@@ -117,7 +117,7 @@ export default async function createRouter(
   );
 
   // Asset controller for knowledge base (reuses QdrantDataAdapter)
-  const qdrantAdapter = createQdrantDataAdapter();
+  const qdrantAdapter = createQdrantDataAdapter(createEmbeddingClient());
   // Ensure asset collections exist before the first request hits them
   console.log('[router] initializing qdrantDataAdapter (QDRANT_URL =', process.env.QDRANT_URL ?? 'unset → http://localhost:6333', ')...');
   await qdrantAdapter.initialize();

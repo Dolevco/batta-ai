@@ -1,6 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { createTaskRepository, createChatMessageRepository, createMCPIntegrationRepository, createAgentRepository, createTaskRunRepository, createFeedbackRepository, createCustomIntegrationRepository, createSecurityReviewRepository, createPolicyTemplateRepository, getDatabaseConfig, SecurityReviewService, FeatureService, AssetService, createQdrantDataAdapter, WorkerQueue } from '@ai-agent/shared';
+import { createTaskRepository, createChatMessageRepository, createMCPIntegrationRepository, createAgentRepository, createTaskRunRepository, createFeedbackRepository, createCustomIntegrationRepository, createSecurityReviewRepository, createPolicyTemplateRepository, getDatabaseConfig, SecurityReviewService, FeatureService, AssetService, createQdrantDataAdapter, createEmbeddingClient, WorkerQueue } from '@ai-agent/shared';
 import { TaskService } from './services/taskService';
 import { AgentService } from './services/agentService';
 import { TaskController } from './controllers/taskController';
@@ -103,7 +103,8 @@ async function startServer() {
   const feedbackController = new FeedbackController(feedbackRepository, taskService);
   const builtInIntegrationController = new BuiltInIntegrationController(customIntegrationRepository);
 
-  const featureQdrantAdapter = createQdrantDataAdapter();
+  const embeddingClient = createEmbeddingClient();
+  const featureQdrantAdapter = createQdrantDataAdapter(embeddingClient);
   const featureService = new FeatureService(featureQdrantAdapter);
   const assetService = new AssetService(featureQdrantAdapter);
 
@@ -115,7 +116,7 @@ async function startServer() {
 
   const securityReviewService = new SecurityReviewService(securityReviewRepository, featureService, policyTemplateRepository, customIntegrationRepository, taskRepository, new WorkerQueue());
 
-  const chatController = new ChatController(securityReviewService, featureService);
+  const chatController = new ChatController(securityReviewService, featureService, embeddingClient);
   const securityReviewController = new SecurityReviewController(securityReviewService);
   const overviewController = new OverviewController(securityReviewService, assetService);
 

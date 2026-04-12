@@ -75,27 +75,36 @@ export async function initializePlannedTask(
     enableChainOfThoughts = false,
   } = config;
 
+  // Determine authentication mode.
+  // Default: Managed Identity. Set AZURE_OPENAI_AUTH=use_llm_provider_key to use API key auth.
+  const useManagedIdentity = process.env.AZURE_OPENAI_AUTH !== 'use_llm_provider_key';
+
   // Validate required environment variables
-  if (!process.env.AZURE_OPENAI_ENDPOINT || 
-      !process.env.AZURE_OPENAI_API_KEY || 
-      !process.env.AZURE_OPENAI_DEPLOYMENT) {
+  const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+  const azureDeployment = process.env.AZURE_OPENAI_DEPLOYMENT;
+  if (!azureEndpoint || !azureDeployment) {
     throw new Error('Missing required Azure OpenAI environment variables');
+  }
+  if (!useManagedIdentity && !process.env.AZURE_OPENAI_API_KEY) {
+    throw new Error('AZURE_OPENAI_API_KEY is required when AZURE_OPENAI_AUTH=use_llm_provider_key');
   }
 
   // Create API clients
   const apiClient = new AzureOpenAIClient({
-    endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+    endpoint: azureEndpoint,
     apiKey: process.env.AZURE_OPENAI_API_KEY,
-    deploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
+    deploymentName: azureDeployment,
     apiVersion: process.env.AZURE_OPENAI_API_VERSION,
-    highReasoningEffort
+    highReasoningEffort,
+    useManagedIdentity,
   });
 
   const embeddingClient = new AzureOpenAIEmbeddingClient({
-    endpoint: process.env.AZURE_OPENAI_EMBEDDING_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT,
+    endpoint: process.env.AZURE_OPENAI_EMBEDDING_ENDPOINT || azureEndpoint,
     apiKey: process.env.AZURE_OPENAI_EMBEDDING_API_KEY || process.env.AZURE_OPENAI_API_KEY,
     deploymentName: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT || 'text-embedding-ada-002',
     apiVersion: process.env.AZURE_OPENAI_EMBEDDING_API_VERSION,
+    useManagedIdentity,
   });
 
   // Create tool configuration
