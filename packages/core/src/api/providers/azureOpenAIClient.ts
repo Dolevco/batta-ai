@@ -4,6 +4,12 @@ import { Message } from '../../task/types';
 import { CompletionResponse, ILLMApiHandler, StreamChunk } from '..';
 
 export interface AzureConfig {
+  /**
+   * One or more Azure OpenAI endpoint URLs. Multiple endpoints can be supplied as a
+   * semicolon-delimited string (e.g. "https://a.openai.azure.com;https://b.openai.azure.com").
+   * On HTTP 429 the client will automatically rotate to the next endpoint.
+   * Each value must be a valid https:// URL.
+   */
   endpoint: string;
   /** Required when useManagedIdentity is false (API key mode). */
   apiKey?: string;
@@ -25,8 +31,63 @@ function requiresResponsesApi(deploymentName: string): boolean {
   return RESPONSES_API_MODELS.some(m => name.includes(m));
 }
 
+function parseEndpoints(raw: string): string[] {
+  const endpoints = raw
+    .split(';')
+    .map(e => e.trim())
+    .filter(e => e.length > 0);
+
+  if (endpoints.length === 0) {
+    throw new Error('AZURE_OPENAI_ENDPOINT must contain at least one endpoint URL');
+  }
+
+  for (let i = 0; i < endpoints.length; i++) {
+    let url: URL;
+    try {
+      url = new URL(endpoints[i]);
+    } catch {
+      throw new Error(`Invalid endpoint URL at index ${i}`);
+    }
+    if (url.protocol !== 'https:') {
+      throw new Error(`Endpoint at index ${i} must use https:// protocol`);
+    }
+  }
+
+  return endpoints;
+}
+
+function buildClient(endpoint: string, config: AzureConfig): AzureOpenAI {
+  const useManagedIdentity = config.useManagedIdentity ?? true;
+
+  if (useManagedIdentity) {
+    const credential = new DefaultAzureCredential();
+    const azureADTokenProvider = getBearerTokenProvider(
+      credential,
+      'https://cognitiveservices.azure.com/.default'
+    );
+    // Pass apiKey: '' to suppress the SDK's automatic AZURE_OPENAI_API_KEY env-var default,
+    // which would otherwise conflict with azureADTokenProvider (they are mutually exclusive).
+    return new AzureOpenAI({
+      azureADTokenProvider,
+      apiKey: '',
+      endpoint,
+      apiVersion: config.apiVersion,
+    });
+  }
+
+  if (!config.apiKey) {
+    throw new Error('apiKey is required when useManagedIdentity is false');
+  }
+  return new AzureOpenAI({
+    apiKey: config.apiKey,
+    endpoint,
+    apiVersion: config.apiVersion,
+  });
+}
+
 export class AzureOpenAIClient implements ILLMApiHandler {
-  private client: AzureOpenAI;
+  private clients: AzureOpenAI[];
+  private currentIndex: number = 0;
   private deploymentName: string;
   private completionRequestOptions: any;
   private useResponsesApi: boolean;
@@ -36,32 +97,18 @@ export class AzureOpenAIClient implements ILLMApiHandler {
     this.useResponsesApi = requiresResponsesApi(config.deploymentName);
     this.completionRequestOptions = this.getRequestOptions(config.deploymentName, !!config.highReasoningEffort);
 
-    const useManagedIdentity = config.useManagedIdentity ?? true;
+    const endpoints = parseEndpoints(config.endpoint);
+    this.clients = endpoints.map(ep => buildClient(ep, config));
+  }
 
-    if (useManagedIdentity) {
-      const credential = new DefaultAzureCredential();
-      const azureADTokenProvider = getBearerTokenProvider(
-        credential,
-        'https://cognitiveservices.azure.com/.default'
-      );
-      // Pass apiKey: '' to suppress the SDK's automatic AZURE_OPENAI_API_KEY env-var default,
-      // which would otherwise conflict with azureADTokenProvider (they are mutually exclusive).
-      this.client = new AzureOpenAI({
-        azureADTokenProvider,
-        apiKey: '',
-        endpoint: config.endpoint,
-        apiVersion: config.apiVersion,
-      });
-    } else {
-      if (!config.apiKey) {
-        throw new Error('apiKey is required when useManagedIdentity is false');
-      }
-      this.client = new AzureOpenAI({
-        apiKey: config.apiKey,
-        endpoint: config.endpoint,
-        apiVersion: config.apiVersion,
-      });
-    }
+  private get client(): AzureOpenAI {
+    return this.clients[this.currentIndex];
+  }
+
+  private rotateEndpoint(): boolean {
+    if (this.clients.length <= 1) return false;
+    this.currentIndex = (this.currentIndex + 1) % this.clients.length;
+    return true;
   }
 
   // Retry config
@@ -108,8 +155,64 @@ export class AzureOpenAIClient implements ILLMApiHandler {
     }
   }
 
+  /**
+   * Handle a 429 response during a retry loop.
+   *
+   * Strategy:
+   *  - First, rotate to the next endpoint immediately (no sleep) — it may have quota.
+   *  - Once we have cycled through ALL endpoints without success, that completes one
+   *    "cycle". We then sleep before starting the next cycle.
+   *  - cycleAttempt counts completed cycles; we give up after MAX_RETRIES cycles.
+   *
+   * Returns the wait duration that was applied (0 if we just rotated, >0 if we slept),
+   * or null if retries are exhausted.
+   */
+  private async handle429(
+    error: any,
+    cycleAttempt: { value: number },
+    consecutiveThrottled: { value: number },
+    context: string
+  ): Promise<number | null> {
+    consecutiveThrottled.value++;
+
+    // Rotate to the next endpoint first — no sleep needed if quota is available there.
+    const rotated = this.rotateEndpoint();
+    const prevIndex = rotated
+      ? (this.currentIndex - 1 + this.clients.length) % this.clients.length
+      : this.currentIndex;
+
+    if (rotated && consecutiveThrottled.value < this.clients.length) {
+      // Haven't tried all endpoints in this cycle yet — switch and retry immediately.
+      console.warn(
+        `[AzureOpenAI] 429 on endpoint ${prevIndex + 1}/${this.clients.length} (${context}), ` +
+        `rotating to endpoint ${this.currentIndex + 1}`
+      );
+      return 0;
+    }
+
+    // We've now tried every endpoint in this cycle — time to sleep.
+    cycleAttempt.value++;
+    consecutiveThrottled.value = 0;
+
+    if (cycleAttempt.value > this.MAX_RETRIES) {
+      return null; // exhausted
+    }
+
+    const retryAfter =
+      this.getRetryAfterMs(error) ??
+      Math.min(this.DEFAULT_RETRY_AFTER_MS * Math.pow(2, cycleAttempt.value - 1), 60000);
+
+    console.warn(
+      `[AzureOpenAI] All ${this.clients.length} endpoint(s) returned 429 (${context}). ` +
+      `Cycle ${cycleAttempt.value}/${this.MAX_RETRIES} — waiting ${retryAfter}ms before retrying.`
+    );
+    await this.sleep(retryAfter);
+    return retryAfter;
+  }
+
   async createCompletion(messages: Message[]): Promise<CompletionResponse> {
-    let attempt = 0;
+    const cycleAttempt = { value: 0 };
+    const consecutiveThrottled = { value: 0 };
 
     while (true) {
       try {
@@ -146,14 +249,11 @@ export class AzureOpenAIClient implements ILLMApiHandler {
           }
         };
       } catch (error: any) {
-        const status = error?.status || error?.statusCode || error?.response?.status || (error?.status && Number(error.status));
+        const status = error?.status || error?.statusCode || error?.response?.status;
 
-        if (status === 429 && attempt < this.MAX_RETRIES) {
-          attempt++;
-          const retryAfter = this.getRetryAfterMs(error) ?? Math.min(this.DEFAULT_RETRY_AFTER_MS * Math.pow(2, attempt - 1), 60000);
-          console.warn(`Received 429 from Azure OpenAI, retrying attempt ${attempt}/${this.MAX_RETRIES} after ${retryAfter}ms`);
-          await this.sleep(retryAfter);
-          continue;
+        if (status === 429) {
+          const waited = await this.handle429(error, cycleAttempt, consecutiveThrottled, 'completion');
+          if (waited !== null) continue;
         }
 
         console.error('Error creating completion:', error);
@@ -163,9 +263,9 @@ export class AzureOpenAIClient implements ILLMApiHandler {
   }
 
   async *createStreamingCompletion(messages: Message[]): AsyncIterable<StreamChunk> {
-    let attempt = 0;
+    const cycleAttempt = { value: 0 };
+    const consecutiveThrottled = { value: 0 };
 
-    // We will attempt to recreate the stream on 429s (or certain transient errors) up to MAX_RETRIES.
     while (true) {
       try {
         if (this.useResponsesApi) {
@@ -203,18 +303,13 @@ export class AzureOpenAIClient implements ILLMApiHandler {
           }
         }
 
-        // If the stream ends normally, break out (no more retries needed)
         return;
       } catch (error: any) {
-        const status = error?.status || error?.statusCode || error?.response?.status || (error?.status && Number(error.status));
+        const status = error?.status || error?.statusCode || error?.response?.status;
 
-        if (status === 429 && attempt < this.MAX_RETRIES) {
-          attempt++;
-          const retryAfter = this.getRetryAfterMs(error) ?? Math.min(this.DEFAULT_RETRY_AFTER_MS * Math.pow(2, attempt - 1), 60000);
-          console.warn(`Received 429 while streaming from Azure OpenAI, retrying attempt ${attempt}/${this.MAX_RETRIES} after ${retryAfter}ms`);
-          await this.sleep(retryAfter);
-          // On retry, recreate the stream and continue yielding any further chunks
-          continue;
+        if (status === 429) {
+          const waited = await this.handle429(error, cycleAttempt, consecutiveThrottled, 'streaming');
+          if (waited !== null) continue;
         }
 
         console.error('Error creating streaming completion:', error);
