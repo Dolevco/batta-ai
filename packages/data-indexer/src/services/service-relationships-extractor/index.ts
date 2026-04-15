@@ -59,6 +59,8 @@ import { correlateIaCToCloudResources } from './correlators/iac-to-cloud';
 import type { ArtifactResourceGroupAffinity, ServiceResourceGroupAffinity } from './correlators/iac-to-cloud';
 import { correlateIaCToServices } from './correlators/iac-to-service';
 import { correlateServicesToCloudResources } from './correlators/service-to-cloud';
+import { correlateServiceCalls } from './correlators/service-to-service';
+import { emitExternalDepRelationships } from '../static-dependency-extractor/relationship-emitter';
 import { ExploitabilityAnalyzer } from './exploitability/exploitability-analyzer';
 import { CloudResourceRepository } from '../cloud-resource-repository';
 import { extractDeploymentScopes } from './helpers/scope-resolver';
@@ -120,6 +122,16 @@ export class ServiceRelationshipsExtractor {
   async extract(input: ServiceRelationshipsInput): Promise<ServiceRelationshipsResult> {
     const { tenantId, repositoryPath, services, buildArtifacts, deploymentArtifacts, repositoryBriefing } = input;
 
+    // ── Domain filtering ───────────────────────────────────────────────────
+    // undefined = all domains enabled (default full scan).
+    const { domains } = input;
+    const domainEnabled = (d: 'iac' | 'services' | 'service_relationships') =>
+      !domains || domains.includes(d);
+
+    if (domains) {
+      console.log(`   [SRE] Domain filter active: [${domains.join(', ')}]`);
+    }
+
     // ── Cloud resource store ───────────────────────────────────────────────
     // Prefer the pre-built repository; fall back to wrapping the flat array.
     // Security: the repository enforces maxResults bounds on every query so
@@ -146,7 +158,7 @@ export class ServiceRelationshipsExtractor {
     const declarativeArtifacts = deploymentArtifacts.filter(
       a => !isScriptDeploymentArtifact(a),
     );
-    if (declarativeArtifacts.length > 0) {
+    if (domainEnabled('iac') && declarativeArtifacts.length > 0) {
       console.log(
         `   [SRE] Step 0 – IaC Deep Analysis (${declarativeArtifacts.length} declarative artifact(s))…`,
       );
@@ -185,7 +197,7 @@ export class ServiceRelationshipsExtractor {
     const scriptBuildArtifacts = buildArtifacts.filter(isScriptBuildArtifact);
     const scriptArtifactCount = scriptDeploymentArtifacts.length + scriptBuildArtifacts.length;
 
-    if (scriptArtifactCount > 0) {
+    if (domainEnabled('iac') && scriptArtifactCount > 0) {
       console.log(
         `   [SRE] Step 0.5 – Script Analysis (${scriptDeploymentArtifacts.length} deploy script(s), ` +
         `${scriptBuildArtifacts.length} build script(s))…`,
@@ -263,7 +275,7 @@ export class ServiceRelationshipsExtractor {
 
     // ── Step 1: Build Artifact Analysis — non-script build artifacts ──────
     const nonScriptBuildArtifacts = buildArtifacts.filter(a => !isScriptBuildArtifact(a));
-    if (nonScriptBuildArtifacts.length > 0) {
+    if (domainEnabled('services') && nonScriptBuildArtifacts.length > 0) {
       console.log(
         `   [SRE] Step 1 – Build Artifact Analysis (${nonScriptBuildArtifacts.length} artifact(s))…`,
       );
@@ -300,7 +312,7 @@ export class ServiceRelationshipsExtractor {
     // service A depends on service B, B's completed surface is available as
     // structured context for A's Pass 2 — avoiding redundant file reads and
     // ensuring transitive deps are captured accurately.
-    if (services.length > 0) {
+    if (domainEnabled('services') && services.length > 0) {
       const orderedServices = topoSortServices([...serviceMap.values()]);
       console.log(
         `   [SRE] Step 2 – Service Analysis (${orderedServices.length} service(s), ` +
@@ -351,8 +363,70 @@ export class ServiceRelationshipsExtractor {
       }
     }
 
+    // ── Step 2.5: External Dep Relationship Emission ──────────────────────
+    // Converts ExternalDep[] from Pass 2 (LLM-sourced) into typed graph edges.
+    // Runs after all services have been analysed so cross-service deduplication works.
+    // Emits: READS_FROM, WRITES_TO, SUBSCRIBES_TO, PUBLISHES_TO, READS_STORAGE, WRITES_STORAGE.
+    if (domainEnabled('services') && services.length > 0) {
+      const allCloudResources = cloudRepository.totalCount > 0
+        ? cloudRepository.query({}, cloudRepository.totalCount)
+        : [];
+      let depRelCount = 0;
+      let inferredCount = 0;
+
+      for (const service of serviceMap.values()) {
+        try {
+          const { relationships: depRels, inferredResources } = emitExternalDepRelationships(
+            tenantId, service, allCloudResources,
+          );
+          // Persist inferred CloudResource nodes before relationships
+          // (Neo4j MATCH requires nodes to exist before edges can reference them).
+          for (const res of inferredResources) {
+            await this.persistence.persistCloudResource(res);
+            inferredCount++;
+          }
+          allRelationships.push(...depRels);
+          depRelCount += depRels.length;
+        } catch (err) {
+          console.error(
+            `   [SRE]   ❌ ${service.name}: ExternalDep emission failed:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+      console.log(
+        `   [SRE] Step 2.5 – ExternalDep Relationships: ${depRelCount} relationship(s), ` +
+        `${inferredCount} inferred CloudResource node(s)`,
+      );
+    }
+
+    // ── Step 2.6: Service-to-Service Call Correlation ─────────────────────
+    // Matches ExternalDep.endpoints[] from consumers against
+    // ServiceSkeleton.exposedEndpoints[] from providers.
+    // Emits: CALLS_SERVICE, CALLS_API.
+    if (domainEnabled('service_relationships') && services.length > 1) {
+      console.log(
+        `   [SRE] Step 2.6 – Service Call Correlation (${services.length} service(s))…`,
+      );
+      try {
+        const serviceCallRels = await correlateServiceCalls(
+          [...serviceMap.values()], tenantId, this.registry,
+        );
+        allRelationships.push(...serviceCallRels);
+        console.log(
+          `   [SRE]   ✅ ${serviceCallRels.length} service call relationship(s) ` +
+          `(CALLS_SERVICE + CALLS_API)`,
+        );
+      } catch (err) {
+        console.error(
+          `   [SRE]   ❌ Service call correlation failed:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+
     // ── Step 3: Build → Service (BUILDS) ──────────────────────────────────
-    if (buildArtifacts.length > 0 && services.length > 0) {
+    if (domainEnabled('services') && buildArtifacts.length > 0 && services.length > 0) {
       console.log(
         `   [SRE] Step 3 – Build → Service (${buildArtifacts.length} builds, ${services.length} services)…`,
       );
@@ -365,7 +439,7 @@ export class ServiceRelationshipsExtractor {
     }
 
     // ── Step 4: Build → Deployment (DEPENDS_ON) ───────────────────────────
-    if (buildArtifacts.length > 0 && deploymentArtifacts.length > 0) {
+    if (domainEnabled('services') && buildArtifacts.length > 0 && deploymentArtifacts.length > 0) {
       console.log(
         `   [SRE] Step 4 – Build → Deployment (${buildArtifacts.length} builds, ${deploymentArtifacts.length} deployments)…`,
       );
@@ -381,7 +455,7 @@ export class ServiceRelationshipsExtractor {
     // Each artifact only sees cloud resources in its resolved scope (5–30 vs 800).
     // Builds the artifact-level affinity map used by Step 7.
     let affinityByArtifact: ArtifactResourceGroupAffinity = new Map();
-    if (artifactMap.size > 0 && cloudRepository.totalCount > 0) {
+    if (domainEnabled('iac') && artifactMap.size > 0 && cloudRepository.totalCount > 0) {
       console.log(
         `   [SRE] Step 5 – IaC → Cloud Resource (${artifactMap.size} IaC, ${cloudRepository.totalCount} resources)…`,
       );
@@ -395,7 +469,7 @@ export class ServiceRelationshipsExtractor {
     }
 
     // ── Step 6: IaC → Service ──────────────────────────────────────────────
-    if (artifactMap.size > 0 && services.length > 0) {
+    if (domainEnabled('iac') && artifactMap.size > 0 && services.length > 0) {
       console.log(
         `   [SRE] Step 6 – IaC → Service (${artifactMap.size} IaC, ${services.length} services)…`,
       );
@@ -436,7 +510,7 @@ export class ServiceRelationshipsExtractor {
     }
 
     // ── Step 7: Service → Cloud Resource ── scoped via affinity ───────────
-    if (services.length > 0 && cloudRepository.totalCount > 0) {
+    if (domainEnabled('service_relationships') && services.length > 0 && cloudRepository.totalCount > 0) {
       console.log(
         `   [SRE] Step 7 – Service → Cloud Resource (${services.length} services)…`,
       );

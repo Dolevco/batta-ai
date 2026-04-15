@@ -61,13 +61,28 @@ export class ServiceExternalSurfaceCompletionTool extends BaseTool<ServiceExtern
       name: 'surface',
       description:
         'ServiceExternalSurface object with:\n' +
-        '  externalDeps[]       — each dep: { name, type, purpose, dataFlow, dataClassification, businessValue, evidence }\n' +
-        '    type values: api | cloud | queue | database | cache | storage | identity | other\n' +
-        '    dataFlow values: inbound | outbound | bidirectional\n' +
-        '    dataClassification: public | internal | confidential | restricted\n' +
-        '    evidence: env var KEY NAME(s) and/or import/package name — NO secret values\n' +
-        '  trustBoundaryMap     — { IDENTITY: string[], DATA: string[], EXTERNAL: string[], INTERNET: string[], SERVICE: string[] }\n' +
-        '    Each dep.name should appear in exactly one boundary list',
+        '  externalDeps[]  — each dep:\n' +
+        '    name              (string)   — short descriptive name\n' +
+        '    type              (string)   — api | cloud | queue | database | cache | storage | identity | other\n' +
+        '    purpose           (string)   — why the service uses this dep\n' +
+        '    dataFlow          (string)   — inbound | outbound | bidirectional\n' +
+        '    dataClassification(string)   — public | internal | confidential | restricted\n' +
+        '    businessValue     (string)   — why this dep matters\n' +
+        '    evidence          (string)   — env var KEY NAME(s) / import path — NEVER actual values\n' +
+        '    resourceName      (string?)  — concrete resource id for correlation:\n' +
+        '                                   database → db/schema name (e.g. "neo4j")\n' +
+        '                                   cache    → logical name or key-space prefix\n' +
+        '                                   queue    → queue/topic name (e.g. "indexing")\n' +
+        '                                   storage  → bucket/container name\n' +
+        '                                   api      → base path prefix (e.g. "/api") NOT hostname\n' +
+        '    endpoints         (string[]?) — for type=api only: sampled paths called\n' +
+        '                                   e.g. ["POST /tasks", "GET /tasks/:id", "POST /chat"]\n' +
+        '                                   Use parameterized forms (/:id), not concrete IDs\n' +
+        '    operations        (string[]?) — specific ops: ["read"], ["write"],\n' +
+        '                                   ["read","write"], ["subscribe"], ["publish"]\n' +
+        '                                   Allowed: read | write | subscribe | publish | upsert | delete | search\n' +
+        '  trustBoundaryMap — { IDENTITY: [], DATA: [], EXTERNAL: [], INTERNET: [], SERVICE: [] }\n' +
+        '    Each dep.name must appear in exactly one boundary list',
       required: true,
       type: 'object',
     },
@@ -140,6 +155,51 @@ export class ServiceExternalSurfaceCompletionTool extends BaseTool<ServiceExtern
             `${p}.evidence appears to contain a secret value. ` +
             'Only include the env var KEY NAME and file path, never the actual value.',
           );
+        }
+
+        // Validate optional correlation fields (Critical: input validation task 4604f7e1)
+        if (dep.endpoints !== undefined) {
+          if (!Array.isArray(dep.endpoints)) {
+            errors.push(`${p}.endpoints must be an array when present.`);
+          } else if (dep.type !== 'api') {
+            errors.push(`${p}.endpoints should only be set when type is 'api'.`);
+          } else if (dep.endpoints.length > 20) {
+            errors.push(`${p}.endpoints has too many items (max 20 — sample representative paths).`);
+          } else {
+            dep.endpoints.forEach((ep, j) => {
+              if (typeof ep !== 'string') {
+                errors.push(`${p}.endpoints[${j}] must be a string.`);
+                return;
+              }
+              // Strip optional method prefix (e.g. "POST ") before checking for full URL
+              const pathPart = ep.replace(/^(GET|POST|PUT|DELETE|PATCH)\s+/i, '').trim();
+              if (pathPart.includes('://') || /^https?:/i.test(pathPart)) {
+                errors.push(
+                  `${p}.endpoints[${j}] must be a path (e.g. "POST /tasks" or "/tasks"), not a full URL.`,
+                );
+              }
+            });
+          }
+        }
+
+        if (dep.operations !== undefined) {
+          if (!Array.isArray(dep.operations)) {
+            errors.push(`${p}.operations must be an array when present.`);
+          } else {
+            // Allow-list validation (Critical: input validation task 4604f7e1)
+            const VALID_OPS = ['read', 'write', 'subscribe', 'publish', 'upsert', 'delete', 'search'];
+            dep.operations.forEach((op, j) => {
+              if (typeof op !== 'string') {
+                errors.push(`${p}.operations[${j}] must be a string.`);
+                return;
+              }
+              if (!VALID_OPS.includes(op)) {
+                errors.push(
+                  `${p}.operations[${j}] "${op}" must be one of: ${VALID_OPS.join(', ')}`,
+                );
+              }
+            });
+          }
         }
       });
     }

@@ -14,6 +14,10 @@ export const VALID_RELATIONSHIP_TYPES: RelationshipType[] = [
   'OWNS', 'USES', 'BUILDS', 'DEPLOYS', 'CONNECTS_TO', 'EXPOSED_TO_INTERNET',
   'ASSUMES_ROLE', 'READS_FROM', 'WRITES_TO', 'TRUSTS', 'AUTHENTICATES_WITH',
   'AUTHORIZES_WITH', 'CROSSES_BOUNDARY',
+  // Dependency graph relationships (Steps 2.5 and 2.6)
+  'CALLS_SERVICE', 'CALLS_API',
+  'SUBSCRIBES_TO', 'PUBLISHES_TO',
+  'READS_STORAGE', 'WRITES_STORAGE',
 ];
 
 /**
@@ -25,6 +29,10 @@ export const CLOUD_REL_TYPES: Set<RelationshipType> = new Set([
   'READS_FROM', 'WRITES_TO', 'AUTHENTICATES_WITH', 'AUTHORIZES_WITH',
   'ASSUMES_ROLE', 'CROSSES_BOUNDARY', 'TRUSTS',
   'ASSIGNED_TO', 'HAS_ROLE',
+  // Dependency graph (ExternalDep correlation)
+  'CALLS_SERVICE', 'CALLS_API',
+  'SUBSCRIBES_TO', 'PUBLISHES_TO',
+  'READS_STORAGE', 'WRITES_STORAGE',
 ]);
 
 export interface ServiceRelationshipsInput {
@@ -56,6 +64,15 @@ export interface ServiceRelationshipsInput {
    * service agent starts with a consistent picture of the repository.
    */
   repositoryBriefing?: RepositoryBriefing;
+  /**
+   * Optional allow-list of analysis domains to run.
+   * undefined means all steps run (default full behaviour).
+   *
+   * 'iac'                   — Steps 0, 0.5 (IaC/script analysis), 5, 6
+   * 'services'              — Steps 1, 2, 2.5, 3, 4 (build + service analysis + build→service/deployment)
+   * 'service_relationships' — Steps 2.6, 7 (service call correlation + service→cloud)
+   */
+  domains?: Array<'iac' | 'services' | 'service_relationships'>;
 }
 
 export interface ServiceRelationshipsResult {

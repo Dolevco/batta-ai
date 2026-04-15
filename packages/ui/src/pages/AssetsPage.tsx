@@ -29,7 +29,7 @@ import {
 import { useAssets } from '../hooks';
 import { useFeatures } from '../hooks/useFeatures';
 import { useIntegrations } from '../hooks/useIntegrations';
-import type { Asset, AssetCategory, ScanRecord, ScanOptions, ScanStageInfo, ScanRepositoryInfo } from '../types';
+import type { Asset, AssetCategory, ScanRecord, ScanOptions, ScanDomain, ScanStageInfo, ScanRepositoryInfo } from '../types';
 import { FeatureListView } from '../components/FeatureListView';
 import { RepositoryDetailPanel } from '../components/RepositoryDetailPanel';
 import { getNodeIcon } from '../utils/nodeIcons';
@@ -288,6 +288,13 @@ interface ScanDialogProps {
   cloudIntegrationName?: string;
 }
 
+const DOMAIN_OPTIONS: { value: ScanDomain; label: string; description: string }[] = [
+  { value: 'iac',                  label: 'Analyze IaC',              description: 'Infrastructure-as-Code files (Terraform, Bicep, ARM, Helm)' },
+  { value: 'services',             label: 'Analyze Services',         description: 'Service skeletons, external surfaces, and build artifacts' },
+  { value: 'service_relationships',label: 'Analyze Service Usage',    description: 'Service-to-service call patterns and dependency graph' },
+  { value: 'features',             label: 'Analyze Features & Threats', description: 'Business features, DFD extraction, and threat models' },
+];
+
 function ScanDialog({ open, loading, repositories, loadingRepos, onStart, onCancel, isDark, hasCloudIntegration, cloudIntegrationName }: ScanDialogProps) {
   const [opts, setOpts] = useState<ScanOptions>({
     enableCloudDiscovery: false,
@@ -295,6 +302,8 @@ function ScanDialog({ open, loading, repositories, loadingRepos, onStart, onCanc
     runType: 'incremental',
   });
   const [selectedRepos, setSelectedRepos] = useState<string[] | undefined>(undefined);
+  const [selectedDomains, setSelectedDomains] = useState<ScanDomain[] | undefined>(undefined);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -304,6 +313,8 @@ function ScanDialog({ open, loading, repositories, loadingRepos, onStart, onCanc
         runType: 'incremental',
       });
       setSelectedRepos(undefined);
+      setSelectedDomains(undefined);
+      setAdvancedOpen(false);
     }
   }, [open, hasCloudIntegration]);
 
@@ -320,9 +331,18 @@ function ScanDialog({ open, loading, repositories, loadingRepos, onStart, onCanc
     const base = selectedRepos ?? allRepoNames;
     setSelectedRepos(checked ? [...base, name] : base.filter(r => r !== name));
   };
+  const allDomains = DOMAIN_OPTIONS.map(d => d.value);
+  const allDomainsSelected = selectedDomains === undefined || selectedDomains.length === allDomains.length;
+  const handleToggleDomain = (value: ScanDomain, checked: boolean) => {
+    const base = selectedDomains ?? allDomains;
+    const next = checked ? [...base, value] : base.filter(d => d !== value);
+    setSelectedDomains(next.length === allDomains.length ? undefined : next);
+  };
+  const handleToggleAllDomains = (checked: boolean) => setSelectedDomains(checked ? undefined : []);
+
   const handleStart = () => {
     const reposFilter = selectedRepos && selectedRepos.length < allRepoNames.length ? selectedRepos : undefined;
-    onStart({ ...opts, repositories: reposFilter });
+    onStart({ ...opts, repositories: reposFilter, domains: selectedDomains });
   };
 
   return (
@@ -389,6 +409,63 @@ function ScanDialog({ open, loading, repositories, loadingRepos, onStart, onCanc
             ? 'Only changed files are re-indexed. Unchanged entities are preserved as-is.'
             : 'All repositories are re-indexed from scratch. Safe to run at any time — no duplicates created.'}
         </div>
+      </div>
+
+      {/* Advanced Options (collapsible) */}
+      <div style={{ marginBottom: 16, border: `1px solid ${dk(isDark, T.stone200, D.border)}`, borderRadius: 10, overflow: 'hidden' }}>
+        <button
+          onClick={() => setAdvancedOpen(v => !v)}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '9px 12px', background: dk(isDark, T.stone50, D.bgSub),
+            border: 'none', cursor: 'pointer',
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 600, color: dk(isDark, T.stone600, D.textMuted) }}>Advanced Options</span>
+          <span style={{ fontSize: 11, color: dk(isDark, T.stone400, D.textFaint), transition: 'transform 0.15s', display: 'inline-block', transform: advancedOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>▾</span>
+        </button>
+
+        {advancedOpen && (
+          <div style={{ padding: '12px 12px 4px', borderTop: `1px solid ${dk(isDark, T.stone200, D.border)}` }}>
+            {/* Analysis Domains */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: dk(isDark, T.stone400, D.textMuted) }}>Analysis Domains</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={allDomainsSelected} onChange={e => handleToggleAllDomains(e.target.checked)} style={{ accentColor: T.orange }} />
+                  <span style={{ fontSize: 11, color: dk(isDark, T.stone500, D.textMuted) }}>All</span>
+                </label>
+              </div>
+              <div style={{ border: `1px solid ${dk(isDark, T.stone200, D.border)}`, borderRadius: 8, overflow: 'hidden' }}>
+                {DOMAIN_OPTIONS.map((domain, i) => {
+                  const checked = allDomainsSelected || (selectedDomains?.includes(domain.value) ?? false);
+                  return (
+                    <label
+                      key={domain.value}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 9, padding: '8px 11px',
+                        cursor: 'pointer',
+                        borderTop: i > 0 ? `1px solid ${dk(isDark, T.stone100, D.border)}` : undefined,
+                        background: dk(isDark, T.white, D.bgCard),
+                      }}
+                    >
+                      <input type="checkbox" checked={checked} onChange={e => handleToggleDomain(domain.value, e.target.checked)} style={{ accentColor: T.orange, marginTop: 2, flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: dk(isDark, T.stone700, D.text) }}>{domain.label}</div>
+                        <div style={{ fontSize: 11, color: dk(isDark, T.stone400, D.textMuted), lineHeight: 1.4 }}>{domain.description}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+              {!allDomainsSelected && selectedDomains !== undefined && (
+                <div style={{ fontSize: 11, color: dk(isDark, T.stone400, D.textMuted), marginTop: 4 }}>
+                  {selectedDomains.length} of {allDomains.length} domains selected
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Scope buttons */}

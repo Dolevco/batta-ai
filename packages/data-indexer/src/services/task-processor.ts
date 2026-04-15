@@ -22,6 +22,7 @@ import type { IIndexingRunRepository } from '@ai-agent/shared';
 import type { IndexingRun } from '@ai-agent/shared';
 import {
   IndexRepositoryTask,
+  IndexingDomain,
   TaskCheckpoint,
   TaskStage,
   TaskResult,
@@ -251,24 +252,43 @@ export class RepositoryTaskProcessor {
       const semanticDocuments: SemanticDocument[] = checkpoint?.data.semanticDocuments || [];
       currentStage = TaskStage.LLM_CORRELATION;
 
+      // ── Domain filtering helpers ─────────────────────────────────────────
+      // undefined domains means "run everything" (default full scan).
+      const domains = task.options.domains;
+      const domainEnabled = (d: IndexingDomain) => !domains || domains.includes(d);
+      const runLLMCorrelation = domainEnabled('iac') || domainEnabled('services') || domainEnabled('service_relationships');
+      const runFeatures = domainEnabled('features');
+
       // ── Stage 4: LLM Correlation (SRE Steps 0–7) ─────────────────────────
       let repositoryBriefing: RepositoryBriefing | undefined;
       if (currentStage === TaskStage.LLM_CORRELATION) {
-        repositoryBriefing = await this.runLLMCorrelationStage(task, entities, relationships, resolvedRunType, result, onStageChange);
+        if (runLLMCorrelation) {
+          repositoryBriefing = await this.runLLMCorrelationStage(task, entities, relationships, resolvedRunType, result, onStageChange);
+        } else {
+          onStageChange?.(TaskStage.LLM_CORRELATION, 'completed', 0);
+        }
       }
 
       // ── Stage 5: Feature Extraction ──────────────────────────────────────
       // Must complete before Stage 6 so exploitability sees the DFD-based threat model.
       // The repository briefing from Stage 4 is forwarded so feature-extraction agents
       // immediately have context about the repository structure and can plan exploration.
-      await this.runFeatureExtractionStage(task, entities, resolvedRunType, result, onStageChange, repositoryBriefing);
+      if (runFeatures) {
+        await this.runFeatureExtractionStage(task, entities, resolvedRunType, result, onStageChange, repositoryBriefing);
+      } else {
+        onStageChange?.(TaskStage.FEATURE_EXTRACTION, 'completed', 0);
+      }
 
       // ── Stage 6: Exploitability Analysis ─────────────────────────────────
       // Runs after feature extraction to use the unified security context:
       //   - cloud-graph threat model (from Stage 4 / SRE Step 7)
       //   - DFD-based service threat model (from Stage 5 / BusinessFeatureExtractor)
       //   - cloud relationships (in Neo4j)
-      await this.runExploitabilityStage(task, entities, resolvedRunType, result, onStageChange);
+      if (runFeatures) {
+        await this.runExploitabilityStage(task, entities, resolvedRunType, result, onStageChange);
+      } else {
+        onStageChange?.(TaskStage.EXPLOITABILITY_ANALYSIS, 'completed', 0);
+      }
 
       // ── Finalize ─────────────────────────────────────────────────────────
       result.summary.entitiesCreated = entities.length;
@@ -538,6 +558,12 @@ export class RepositoryTaskProcessor {
       console.warn(`[${task.taskId}] ⚠️  Repository briefing unavailable — downstream agents will use reduced context`);
     }
 
+    // Translate task-level domains to the subset that the SRE understands.
+    // 'features' is handled by a later stage (BusinessFeatureExtractor), not the SRE.
+    const sreDomains = task.options.domains?.filter(
+      (d): d is 'iac' | 'services' | 'service_relationships' => d !== 'features',
+    );
+
     const sreResult = await this.serviceRelationshipsExtractor.extract({
       tenantId: task.tenantId,
       repositoryPath,
@@ -546,6 +572,7 @@ export class RepositoryTaskProcessor {
       deploymentArtifacts,
       cloudRepository,
       repositoryBriefing,
+      domains: sreDomains?.length ? sreDomains : undefined,
     });
 
     patchEntities(entities, sreResult.updatedServices);

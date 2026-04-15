@@ -26,6 +26,8 @@ export interface BaseTaskData {
 /**
  * Repository indexing task
  */
+export type IndexingDomain = 'iac' | 'services' | 'service_relationships' | 'features';
+
 export interface IndexRepositoryTask extends BaseTaskData {
   type: TaskType.INDEX_REPOSITORY;
   repository: RepositoryHandle;
@@ -39,6 +41,11 @@ export interface IndexRepositoryTask extends BaseTaskData {
      * Security: must match /^[0-9a-f]{40}$/i before being passed to simple-git.
      */
     sinceCommit?: string;
+    /**
+     * Optional allow-list of analysis domains to run.
+     * undefined means all domains are enabled (default behaviour).
+     */
+    domains?: IndexingDomain[];
   };
 }
 

@@ -20,10 +20,12 @@ import {
   getScan,
   listScans,
   type ScanOptions,
+  type ScanDomain,
 } from '../services/scanService';
 
 const VALID_SCOPES = new Set(['all', 'code', 'cloud']);
 const VALID_RUN_TYPES = new Set<string>(['full', 'incremental']);
+const VALID_DOMAINS = new Set<string>(['iac', 'services', 'service_relationships', 'features']);
 
 export class ScanController {
   /**
@@ -74,12 +76,19 @@ export class ScanController {
             .slice(0, 200) // hard cap to prevent abuse
         : undefined;
 
+      // Validate domains allow-list: only known domain strings pass through
+      const rawDomains = body.domains;
+      const domains: ScanDomain[] | undefined = Array.isArray(rawDomains)
+        ? rawDomains.filter((d: any) => typeof d === 'string' && VALID_DOMAINS.has(d)) as ScanDomain[]
+        : undefined;
+
       const options: ScanOptions = {
         enableCloudDiscovery: body.enableCloudDiscovery === true,
         scope: VALID_SCOPES.has(body.scope) ? body.scope : 'all',
         repositories,
         // 'incremental' must be explicitly requested; any unrecognised value falls back to 'full'
         runType: VALID_RUN_TYPES.has(body.runType) ? (body.runType as 'full' | 'incremental') : 'full',
+        domains: domains?.length ? domains : undefined,
       };
 
       // SSE headers

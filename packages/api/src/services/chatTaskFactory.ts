@@ -2,6 +2,7 @@ import { AzureOpenAIClient, IEmbeddingHandler, ChatTask, MODES, Tool, createChat
 import { Neo4jAdapter, QdrantAdapter, SecurityQueryTools, createSecurityQueryTools, SecurityReviewService, FeatureService } from '@ai-agent/shared';
 import { createSecurityChatTools } from './chatSecurityReviewTools';
 import { createKnowledgeBaseChatTools } from './chatKnowledgeBaseTools';
+import { createServiceRelationshipTools } from './chatServiceRelationshipTools';
 
 interface ChatTaskConfig {
   apiClient: AzureOpenAIClient;
@@ -60,6 +61,10 @@ export async function createChatTask(config: ChatTaskConfig): Promise<ChatTask> 
       // Create and add security tools
       const securityTools = createSecurityQueryTools(securityQueryTools);
       tools.push(...securityTools);
+
+      // Add service-to-service relationship tools
+      const serviceRelTools = createServiceRelationshipTools(neo4j, qdrant, tenantId);
+      tools.push(...serviceRelTools);
     } catch (error) {
       console.warn('Failed to initialize security tools:', error);
       // Continue without security tools

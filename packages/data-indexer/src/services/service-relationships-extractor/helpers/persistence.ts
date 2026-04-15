@@ -5,6 +5,7 @@ import type {
   Relationship,
   TenantId,
   EntityId,
+  CloudResource,
 } from '@ai-agent/shared';
 import { Neo4jAdapter, QdrantAdapter } from '@ai-agent/shared';
 import { buildServiceSemanticDoc } from '../../semantic-indexer';
@@ -138,6 +139,41 @@ export class PersistenceHelper {
       } catch (err) {
         console.error(
           `   [SRE] ⚠️  Neo4j: failed to persist serviceAnalysis for "${service.name}":`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  }
+
+  /**
+   * Persist a CloudResource node to Neo4j (and Qdrant for searchability).
+   * Used by Steps 2.5 to ensure inferred CloudResource nodes exist before
+   * the graph edges that reference them are written (Neo4j MATCH requires nodes first).
+   *
+   * Security: CloudResource entities contain only structural metadata (INTERNAL).
+   * No secret values may appear — this is enforced upstream by the relationship emitter.
+   */
+  async persistCloudResource(resource: CloudResource): Promise<void> {
+    const now = new Date().toISOString();
+    const updated: CloudResource = { ...resource, updatedAt: now, lastIndexedAt: now };
+
+    if (this.neo4j) {
+      try {
+        await this.neo4j.storeEntity(updated);
+      } catch (err) {
+        console.error(
+          `   [SRE] ⚠️  Neo4j: failed to persist CloudResource "${resource.name}":`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+
+    if (this.qdrant) {
+      try {
+        await this.qdrant.storeEntity(updated);
+      } catch (err) {
+        console.error(
+          `   [SRE] ⚠️  Qdrant: failed to persist CloudResource "${resource.name}":`,
           err instanceof Error ? err.message : String(err),
         );
       }

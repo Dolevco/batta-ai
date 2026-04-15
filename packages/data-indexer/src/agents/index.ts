@@ -39,6 +39,7 @@ export enum DataIndexerAgentType {
   ServiceThreatModel    = 'service-threat-model',
   ExploitabilityAnalyzer = 'exploitability-analyzer',
   PRValidation           = 'pr-validation',
+  ServiceCallCorrelator  = 'service-call-correlator',
 }
 
 // ── Definition re-exports ─────────────────────────────────────────────────────
@@ -58,6 +59,7 @@ export { SERVICE_DFD_SYNTHESIS_AGENT } from './definitions/serviceDfdSynthesisAg
 export { SERVICE_THREAT_MODEL_AGENT } from './definitions/serviceThreatModelAgent';
 export { EXPLOITABILITY_ANALYZER_AGENT } from './definitions/exploitabilityAnalyzerAgent';
 export { PR_VALIDATION_AGENT } from './definitions/prValidationAgent';
+export { SERVICE_CALL_CORRELATOR_AGENT } from './definitions/serviceCallCorrelatorAgent';
 
 // ── Registry factory ──────────────────────────────────────────────────────────
 
@@ -78,6 +80,7 @@ import { SERVICE_DFD_SYNTHESIS_AGENT } from './definitions/serviceDfdSynthesisAg
 import { SERVICE_THREAT_MODEL_AGENT } from './definitions/serviceThreatModelAgent';
 import { EXPLOITABILITY_ANALYZER_AGENT } from './definitions/exploitabilityAnalyzerAgent';
 import { PR_VALIDATION_AGENT } from './definitions/prValidationAgent';
+import { SERVICE_CALL_CORRELATOR_AGENT } from './definitions/serviceCallCorrelatorAgent';
 
 /**
  * Create a fully-populated DataIndexerAgentRegistry bound to the given LLM clients.
@@ -102,5 +105,6 @@ export function createDataIndexerRegistry(api: ILLMApiHandler, smallApi?: ILLMAp
   registry.register(SERVICE_THREAT_MODEL_AGENT);
   registry.register(EXPLOITABILITY_ANALYZER_AGENT);
   registry.register(PR_VALIDATION_AGENT);
+  registry.register(SERVICE_CALL_CORRELATOR_AGENT);
   return registry;
 }

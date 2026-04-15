@@ -82,6 +82,39 @@ export interface ExternalDep {
   businessValue: string;
   /** How this dependency was identified (env var name, import, config key, etc.) */
   evidence?: string;
+
+  // ── Correlation identifiers (Pass 2 enrichment) ────────────────────────────
+
+  /**
+   * Concrete resource name within the dependency — the join key used during
+   * cross-service correlation. Examples:
+   *   database  → database/schema name: "neo4j", "postgres_main"
+   *   cache     → key-space prefix or logical name: "session_cache"
+   *   queue     → queue/topic name(s): "indexing", "scan-results"
+   *   storage   → bucket/container name: "artifacts-bucket"
+   *   api       → base URL path prefix: "/api"  (NOT the hostname)
+   *
+   * Classification: INTERNAL — no secret values.
+   */
+  resourceName?: string;
+
+  /**
+   * Sample endpoint paths called on a remote API dep, used for matching against
+   * the provider's exposedEndpoints. Only populated when type = 'api'.
+   * Examples: ["/tasks", "/tasks/:id", "/chat", "/agents"]
+   * Include parameterized forms (/:id) not concrete IDs.
+   *
+   * Classification: INTERNAL — path templates only, no secret values.
+   */
+  endpoints?: string[];
+
+  /**
+   * Specific operations performed on this dependency.
+   * Examples: ["read"], ["write"], ["read", "write"], ["subscribe"], ["publish"]
+   *
+   * Classification: INTERNAL.
+   */
+  operations?: string[];
 }
 
 /**
@@ -226,6 +259,68 @@ export interface RepositoryBriefing {
 }
 
 /**
+ * ServiceDependencyMap – deterministically extracted structural dependency facts.
+ *
+ * Produced by the StaticDependencyExtractor (pure regex, no LLM).
+ * Classification: INTERNAL — contains only names/paths, no secret values.
+ */
+export interface ServiceDependencyMap {
+  /** HTTP routes this service exposes: { method, path, file } */
+  exposedApis: Array<{ method: string; path: string; file: string }>;
+
+  /** Outbound HTTP calls made by this service */
+  calledApis: Array<{
+    /** Raw host or env-var reference, e.g. "USER_SERVICE_URL", "api.stripe.com" */
+    target: string;
+    /** HTTP method if determinable, else null */
+    method: string | null;
+    /** Path template if determinable, e.g. "/users/:id" */
+    path: string | null;
+    /** Source file where call was found */
+    file: string;
+  }>;
+
+  /** Database connections + referenced table/collection names */
+  databases: Array<{
+    /** DB type: 'postgres' | 'mysql' | 'mongodb' | 'redis' | 'sqlite' | 'neo4j' | 'other' */
+    type: string;
+    /** How the connection was identified, e.g. env var name or import */
+    connectionEvidence: string;
+    /** Table or collection names referenced in queries */
+    tableNames: string[];
+    /** Source file */
+    file: string;
+  }>;
+
+  /** Storage buckets / containers / prefixes accessed */
+  storageAccess: Array<{
+    /** 's3' | 'azure-blob' | 'gcs' | 'other' */
+    provider: string;
+    /** Bucket/container name or env-var reference */
+    bucket: string;
+    /** 'read' | 'write' | 'readwrite' */
+    access: 'read' | 'write' | 'readwrite';
+    file: string;
+  }>;
+
+  /** Message queues / topics produced or consumed */
+  queues: Array<{
+    /** Queue or topic name (literal string or env-var reference) */
+    name: string;
+    /** 'producer' | 'consumer' | 'both' */
+    role: 'producer' | 'consumer' | 'both';
+    /** 'sqs' | 'rabbitmq' | 'kafka' | 'azure-servicebus' | 'redis-pubsub' | 'other' */
+    technology: string;
+    file: string;
+  }>;
+
+  /** Confidence of this extraction */
+  confidence: 'deterministic' | 'heuristic';
+  /** ISO timestamp */
+  extractedAt: string;
+}
+
+/**
  * CodeService - A deployable service (API, worker, library, etc.)
  */
 export interface CodeService extends BaseEntity {
@@ -285,6 +380,12 @@ export interface CodeService extends BaseEntity {
    * Classification: INTERNAL — no secret values may appear.
    */
   exploitabilityAnalysis?: ServiceExploitabilityAnalysis;
+  /**
+   * Deterministically extracted structural dependency facts.
+   * Produced by the StaticDependencyExtractor (pure regex, no LLM).
+   * Classification: INTERNAL — contains only names/paths, no secret values.
+   */
+  serviceDependencyMap?: ServiceDependencyMap;
 }
 
 /**
@@ -987,6 +1088,13 @@ export type RelationshipType =
   // IAM / Identity relationships
   | 'ASSIGNED_TO'  // AzureIdentity is assigned (attached) to a CloudResource
   | 'HAS_ROLE'     // AzureIdentity has an RBAC role on a CloudResource / scope
+  | 'CALLS_API'    // CodeService calls a specific endpoint on another CodeService
+  // Dependency graph relationship types (from ExternalDep correlation)
+  | 'CALLS_SERVICE'   // Service-level: consumer → provider (any endpoint)
+  | 'SUBSCRIBES_TO'   // Queue consumer → CloudResource (queue/topic)
+  | 'PUBLISHES_TO'    // Queue producer → CloudResource (queue/topic)
+  | 'READS_STORAGE'   // Blob/file storage read → CloudResource
+  | 'WRITES_STORAGE'  // Blob/file storage write → CloudResource
   ;
 
 /**

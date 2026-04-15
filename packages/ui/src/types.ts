@@ -470,6 +470,8 @@ export interface RelationshipGraph {
 }
 
 // Scan Types
+export type ScanDomain = 'iac' | 'services' | 'service_relationships' | 'features';
+
 export interface ScanOptions {
   enableCloudDiscovery: boolean;
   scope?: 'all' | 'code' | 'cloud';
@@ -481,6 +483,11 @@ export interface ScanOptions {
    * Falls back to 'full' automatically if no prior run record exists.
    */
   runType?: 'full' | 'incremental';
+  /**
+   * Optional allow-list of analysis domains to run.
+   * undefined means all domains are run (default behaviour).
+   */
+  domains?: ScanDomain[];
 }
 
 /** Repository info returned by the scan discovery endpoint. */

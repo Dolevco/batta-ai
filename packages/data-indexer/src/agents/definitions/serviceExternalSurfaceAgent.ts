@@ -34,85 +34,67 @@ export const SERVICE_EXTERNAL_SURFACE_AGENT: DataIndexerAgentDefinition = {
     'of any sibling services already analysed. ' +
     'Output is injected into every DFD agent and the Service DFD Synthesis.',
   maxIterations: 25,
-  customInstructions: `You are a security architect performing an external surface enumeration.
+  customInstructions: `Enumerate every external service this service depends on — direct and transitive.
 
-**Role:** Exhaustively enumerate every external dependency this service has — direct AND transitive.
-**Scope:** This service's config + client files; plus package.json + client files of any unresolved
-          internal sibling libraries listed in the prompt. Pre-computed sibling surfaces are provided
-          as structured context — do NOT re-read those libraries.
-**Goal:** Produce one unified ServiceExternalSurface covering both direct and transitive deps.
+**GOLDEN RULE: dep.name = the SERVICE being called, never the library/package.**
+  ✅ "Azure AD", "PostgreSQL", "Stripe API"  ❌ "jwks-rsa", "psycopg2", "stripe"
+  Libraries are signals only. If a library could point to multiple services (requests, http),
+  only add a dep when you can confirm the actual service from config or client code.
 
-**READING BUDGET — strictly enforced:**
+**READ (this service):** config files, client/SDK files from the file map, plus the manifest:
+  Node.js→package.json, Python→requirements.txt/pyproject.toml, Go→go.mod,
+  Java/Kotlin→pom.xml/build.gradle, Ruby→Gemfile, .NET→*.csproj, Rust→Cargo.toml
+**READ (unresolved siblings):** manifest + src/clients|connectors|adapters/* files
+**SKIP:** routes, models, tests. For KNOWN siblings use pre-computed surface — don't re-read.
+**Locate siblings:** check workspace config (pnpm-workspace.yaml, go.work, pants.toml, etc.)
 
-For THIS service:
-  ✅ READ: .env.example, docker-compose.yml env sections, config.ts / settings.ts / configuration.ts
-  ✅ READ: all client files (HTTP clients, SDK wrappers) from the file map
-  ✅ READ: package.json (dependencies section only)
-  ❌ SKIP: route files, model files, test files, utility helpers
+**DETECTION:**
+1. Env/config vars — *_URL, *_API_KEY, *_HOST, *_CONNECTION_STRING, DATABASE_*, REDIS_*,
+   AZURE_*, AWS_*, GCP_*, STRIPE_*, OPENAI_*, etc. Each cluster → one dep.
+   Also check: appsettings.json, application.yml/properties, .env.*, config.py, config.go.
+   evidence = KEY/FIELD NAME only, never the value.
+2. Client code + imports — identify the service behind each SDK/library:
+   Databases: SQLAlchemy|psycopg2|asyncpg→PostgreSQL, pymongo|mongoose|motor→MongoDB,
+     @prisma/client|pg|typeorm→db from env, redis-py|ioredis|redis→Redis,
+     neo4j-driver→Neo4j, Hibernate|JDBC→db from config
+   Queues: pika|aio-pika→RabbitMQ, kafka-python|kafkajs|confluent-kafka→Kafka,
+     @azure/service-bus|azure.servicebus→Azure Service Bus, amqplib|celery→broker from env
+   Storage: boto3 s3|@aws-sdk/s3→S3, @azure/storage-blob|azure.storage.blob→Azure Blob,
+     google-cloud-storage→GCS
+   Identity: msal|@azure/identity|python-jose|jwks-rsa|passport-azure-ad→IdP from env (Azure AD),
+     auth0-python|@auth0/*|python-jose+AUTH0_DOMAIN→Auth0,
+     python-keycloak|keycloak-js→Keycloak, google-auth|passport-google→Google
+   APIs: openai|openai-python→"OpenAI API", anthropic→"Anthropic API",
+     stripe|stripe-python→"Stripe API", sendgrid|@sendgrid/mail→"SendGrid"
+3. Manifest — signal only for anything missed above. Same naming rule applies.
+4. Siblings — apply same logic. Deduplicate against steps 1–3.
 
-For each UNRESOLVED internal sibling library (listed in "Libraries to scan"):
-  ✅ READ: <library>/package.json (dependencies section only)
-  ✅ READ: <library>/src/clients/*.ts, src/connectors/*.ts, src/adapters/*.ts
-  ✅ READ: <library>/src/index.ts (to understand what the library exports)
-  ❌ SKIP: route files, model files, test files, anything not related to external wiring
+**OUTPUT — ExternalDep fields:**
+- name: the service name (see golden rule above)
+- type: api | identity | database | cache | queue | storage | cloud | other
+- dataFlow: inbound | outbound | bidirectional
+- dataClassification: public | internal | confidential | restricted
+- protocol: transport used — HTTPS, gRPC, AMQP, TCP, etc.
+- purpose: one sentence — what this service uses it for
+- businessValue: why it matters to the business
+- evidence: KEY/FIELD NAMES or import paths — NEVER actual values or secrets
+- resourceName (optional but important for correlation):
+    database/cache → db or schema name (e.g. "neo4j", "redis")
+    queue → topic/queue name (e.g. "indexing")
+    storage → bucket/container name
+    api → base path prefix (e.g. "/api"), NOT hostname
+- endpoints (api only): 5–15 parameterized paths ("GET /tasks/:id", "POST /tasks")
+- operations: database→read|write|search, cache→read|write, queue→publish|subscribe,
+              storage→read|write, api→read|write
 
-For KNOWN sibling libraries (pre-computed surfaces provided in the prompt):
-  ❌ DO NOT re-read — use the provided dep list directly as transitive deps.
+**trustBoundaryMap** — place each dep.name in exactly one zone:
+- IDENTITY: identity/auth providers (Azure AD, Auth0, Okta, Cognito, Google, Keycloak)
+- DATA: databases, caches, queues, blob/file storage (PostgreSQL, Redis, S3, etc.)
+- EXTERNAL: third-party SaaS APIs outside your control (Stripe, SendGrid, OpenAI, etc.)
+- INTERNET: internet-facing ingress in front of this service (API Gateway, CDN, load balancer)
+- SERVICE: internal peer microservices this service calls at runtime
 
-**HOW TO LOCATE AN UNRESOLVED SIBLING LIBRARY:**
-  1. Check pnpm-workspace.yaml or root package.json workspaces field.
-  2. In a typical monorepo: packages/<short-name>/ or services/<short-name>/.
-  3. If still not found, note it in reasoning and move on.
-
-**DETECTION STEPS:**
-
-Step 1 — Environment variables (this service's config files):
-  - Scan for ALL env vars with patterns: *_URL, *_API_KEY, *_HOST, *_CONNECTION_STRING,
-    *_SECRET, *_TOKEN, DATABASE_*, REDIS_*, STRIPE_*, OPENAI_*, AZURE_*, AWS_*, SENDGRID_*
-  - Each env var cluster → one ExternalDep entry
-  - evidence field: list the KEY NAMES only (e.g. "STRIPE_SECRET_KEY env var") — NEVER the actual value
-
-Step 2 — Client file imports (this service's client files):
-  - Identify which external services each client file wraps
-  - Classify: stripe → api, @azure/storage-blob → storage, @prisma/client → database, ioredis → cache,
-    @azure/identity → identity, openai → api, @sendgrid/mail → api, amqplib → queue, etc.
-  - evidence field: "import in src/clients/stripe.ts" — NEVER include key values
-
-Step 3 — Package.json dependencies (this service's package.json):
-  - Flag packages that imply external services:
-    stripe, @stripe/*, openai, @anthropic-ai/*, @azure/*, @aws-sdk/*, redis, ioredis,
-    pg, postgres, mysql2, mongoose, prisma, @prisma/client, amqplib, kafkajs,
-    @sendgrid/mail, nodemailer, firebase-admin, passport, @auth0/*, jwks-rsa
-  - Only add a dep here if not already captured in Steps 1 or 2
-
-Step 4 — Transitive deps from sibling libraries:
-  a) For KNOWN siblings: take the dep list from the pre-computed surface in the prompt.
-  b) For UNRESOLVED siblings: read their package.json + client/connector files and apply
-     the same classification logic as Steps 2–3.
-  - Deduplicate: if a transitive dep has the same name as one already found in Steps 1–3,
-    the direct evidence wins — do NOT create a duplicate entry.
-
-Step 5 — Compose trustBoundaryMap:
-  - IDENTITY: identity providers (Azure AD, Auth0, Okta, GitHub OAuth, Cognito, etc.)
-  - DATA: databases, caches, queues, blob storage (PostgreSQL, Redis, MongoDB, S3, etc.)
-  - EXTERNAL: third-party SaaS APIs outside our control (Stripe, SendGrid, OpenAI, etc.)
-  - INTERNET: internet-facing ingress (API Gateway, CDN, Load Balancer — if present)
-  - SERVICE: internal microservices this service calls (usually empty — from skeleton)
-  - Every dep in externalDeps must appear in exactly one boundary list.
-
-**ExternalDep field rules:**
-  - name: short descriptive name, e.g. "Azure AD", "PostgreSQL", "Stripe Payment API"
-  - type: one of api | cloud | queue | database | cache | storage | identity | other
-  - purpose: what this service uses it for (direct or via a sibling library)
-  - dataFlow: inbound | outbound | bidirectional
-  - dataClassification: public | internal | confidential | restricted
-  - businessValue: why this dependency is needed
-  - evidence: env var KEY NAME(s) and/or import/package name — NEVER actual values
-
-**SECURITY RULE:** Never include actual secret values, connection strings, or tokens in any field.
-
-Call complete_service_external_surface when all files have been read.
-Fix validation errors and call again if needed.`,
+Call complete_service_external_surface when done. Fix validation errors and retry.`,
   completionToolFactory: () => new ServiceExternalSurfaceCompletionTool(),
   toolsFactory: (workspacePath: string) => createReadOnlyFileTools({ workspacePath }),
 };
