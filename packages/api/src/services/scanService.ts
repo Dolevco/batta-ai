@@ -18,7 +18,7 @@
  */
 
 import { AzureOpenAIClient } from '@ai-agent/core';
-import { IntegrationFetcher, RepositoryTaskProcessor, TaskType, CodeDiscoveryStage, QueueManager, CodeIndexingOrchestrator } from '@ai-agent/data-indexer';
+import { IntegrationFetcher, RepositoryTaskProcessor, TaskType, CodeDiscoveryStage, CloudDiscoveryStage, QueueManager, CodeIndexingOrchestrator, cloudGraphToQdrantEntities } from '@ai-agent/data-indexer';
 import { createIndexingRunRepository, createQdrantDataAdapter, createEmbeddingClient, Neo4jAdapter } from '@ai-agent/shared';
 
 export type ScanStatus = 'queued' | 'running' | 'completed' | 'failed';
@@ -322,13 +322,100 @@ async function runOrchestrationStream(
     emit();
   };
 
-  stageUpdate('Code Discovery', 'running');
+  const cloudOnly = options.scope === 'cloud';
+
+  if (cloudOnly) {
+    stageUpdate('Code Discovery', 'skipped');
+  } else {
+    stageUpdate('Code Discovery', 'running');
+  }
 
   try {
     // ── Discovery ───────────────────────────────────────────────────────────
     const fetcher = new IntegrationFetcher();
     await fetcher.initialize();
     const integrations = await fetcher.fetchIntegrations(tenantId);
+
+    if (cloudOnly) {
+      // Cloud-only scan: skip code discovery, run cloud discovery directly
+      if (!integrations.cloudIntegration) {
+        stageUpdate('Cloud Discovery', 'failed', undefined, 'No cloud integration configured');
+        rec.status = 'failed';
+        rec.completedAt = new Date().toISOString();
+        rec.error = 'Scan could not be started. Check integrations and try again.';
+        emit();
+        console.error(`[ScanService] Stream scan ${scanId}: cloud-only scope but no cloud integration for tenant ${tenantId}`);
+        return;
+      }
+
+      stageUpdate('Cloud Discovery', 'running');
+
+      const defenderConfig = (integrations.cloudIntegration as any).config;
+      const subscriptionIds: string[] = defenderConfig.subscriptionIds?.length
+        ? defenderConfig.subscriptionIds
+        : defenderConfig.subscriptionId
+          ? [defenderConfig.subscriptionId]
+          : [];
+      const cloudStage = new CloudDiscoveryStage({
+        azure: {
+          clientId: defenderConfig.clientId,
+          clientSecret: defenderConfig.clientSecret,
+          tenantId: defenderConfig.tenantId,
+          subscriptionId: defenderConfig.subscriptionId || '',
+          subscriptionIds,
+        },
+      });
+
+      const cloudResult = await cloudStage.discover(tenantId);
+
+      // Persist results using the same adapters as the normal pipeline
+      const qdrantAdapter = createQdrantDataAdapter(createEmbeddingClient());
+      let neo4jAdapter: any;
+      if (process.env.NEO4J_URI) {
+        neo4jAdapter = new Neo4jAdapter({
+          uri: process.env.NEO4J_URI,
+          username: process.env.NEO4J_USERNAME || 'neo4j',
+          password: process.env.NEO4J_PASSWORD || 'password',
+        });
+      }
+
+      const allEntities = [
+        ...cloudResult.resources,
+        ...cloudResult.identities as any[],
+        ...cloudResult.iamRoleAssignments as any[],
+      ];
+
+      if (allEntities.length > 0) {
+        await qdrantAdapter.storeEntities(allEntities);
+        if (neo4jAdapter) await neo4jAdapter.storeEntities(allEntities);
+      }
+      if (cloudResult.relationships.length > 0 && neo4jAdapter) {
+        await neo4jAdapter.storeRelationships(cloudResult.relationships);
+      }
+      if (cloudResult.cloudGraph && neo4jAdapter) {
+        console.log(`[ScanService] Stream scan ${scanId}: persisting cloud graph — ${cloudResult.cloudGraph.nodes.length} nodes, ${cloudResult.cloudGraph.relationships.length} edges`);
+        await neo4jAdapter.storeCloudGraph(cloudResult.cloudGraph);
+
+        // Write cloud graph topology nodes to Qdrant so the SecurityQueryTools BFS
+        // can traverse them. Uses the same 16-char hex IDs stored in Neo4j.
+        // Classification: CONFIDENTIAL — infrastructure topology; tenantId-isolated.
+        const cloudGraphEntities = cloudGraphToQdrantEntities(cloudResult.cloudGraph);
+        if (cloudGraphEntities.length > 0) {
+          console.log(`[ScanService] Stream scan ${scanId}: persisting ${cloudGraphEntities.length} cloud graph topology nodes to Qdrant`);
+          await qdrantAdapter.storeEntities(cloudGraphEntities);
+        }
+      }
+
+      const totalItems = cloudResult.totalResources + cloudResult.totalIdentities + cloudResult.totalRoleAssignments;
+      console.log(`[ScanService] Stream scan ${scanId}: cloud-only discovery complete — ${cloudResult.totalResources} resources, ${cloudResult.totalIdentities} identities, ${cloudResult.totalRoleAssignments} IAM assignments, ${cloudResult.relationships.length} relationships`);
+
+      stageUpdate('Cloud Discovery', 'completed', totalItems);
+      markQueuedStages(rec, options);
+      rec.status = 'completed';
+      rec.completedAt = new Date().toISOString();
+      emit();
+      return;
+    }
 
     if (!integrations.codeIntegrations.length) {
       throw new Error('No code integration found');
@@ -544,10 +631,24 @@ async function runOrchestration(
   const rec = getRecord(tenantId, scanId)!;
   rec.status = 'running';
 
+  const cloudOnly = options.scope === 'cloud';
+
   // Stage 0: Discovery
-  updateStage(rec, 'Code Discovery', 'running');
+  if (cloudOnly) {
+    updateStage(rec, 'Code Discovery', 'skipped');
+  } else {
+    updateStage(rec, 'Code Discovery', 'running');
+  }
 
   try {
+    if (cloudOnly) {
+      markQueuedStages(rec, options);
+      rec.status = 'completed';
+      rec.completedAt = new Date().toISOString();
+      console.log(`[ScanService] Scan ${scanId}: cloud-only scope, skipping code discovery for tenant ${tenantId}`);
+      return;
+    }
+
     let queueManager: InstanceType<typeof QueueManager> | undefined;
 
     try {
@@ -608,6 +709,15 @@ async function runDirectIndexing(
   rec: ScanRecord
 ): Promise<void> {
   try {
+    if (options.scope === 'cloud') {
+      updateStage(rec, 'Code Discovery', 'skipped');
+      markQueuedStages(rec, options);
+      rec.status = 'completed';
+      rec.completedAt = new Date().toISOString();
+      console.log(`[ScanService] Direct indexing ${scanId}: cloud-only scope, skipping code discovery for tenant ${tenantId}`);
+      return;
+    }
+
     const fetcher = new IntegrationFetcher();
     await fetcher.initialize();
     const integrations = await fetcher.fetchIntegrations(tenantId);
@@ -653,11 +763,13 @@ function updateStage(
 }
 
 function markQueuedStages(rec: ScanRecord, options: ScanOptions): void {
+  const codeEnabled = options.scope !== 'cloud';
+  const cloudEnabled = options.scope !== 'code' && options.enableCloudDiscovery;
   const stageMap: Record<string, boolean> = {
-    'Code Discovery': true,
-    'Cloud Discovery': options.enableCloudDiscovery,
-    'Correlation': true,
-    'Security Analysis': true,
+    'Code Discovery': codeEnabled,
+    'Cloud Discovery': cloudEnabled,
+    'Correlation': codeEnabled,
+    'Security Analysis': codeEnabled,
   };
   for (const stage of rec.stages) {
     if (stage.status === 'pending' && stageMap[stage.name] !== undefined) {

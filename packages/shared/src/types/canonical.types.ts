@@ -1095,6 +1095,26 @@ export type RelationshipType =
   | 'PUBLISHES_TO'    // Queue producer → CloudResource (queue/topic)
   | 'READS_STORAGE'   // Blob/file storage read → CloudResource
   | 'WRITES_STORAGE'  // Blob/file storage write → CloudResource
+  // Cloud Graph — ingress topology (cloud-graph.types.ts)
+  | 'ROUTES_TO'         // INTERNET → FrontDoorProfile; TM profile → TM endpoint
+  | 'HAS_ENDPOINT'      // FrontDoorProfile → FrontDoorEndpoint
+  | 'HAS_ROUTE'         // FrontDoorEndpoint → FrontDoorRoute
+  | 'HAS_ORIGIN_GROUP'  // FrontDoorProfile → FrontDoorOriginGroup
+  | 'HAS_ORIGIN'        // FrontDoorOriginGroup → FrontDoorOrigin
+  | 'EXPOSES_API'       // APIManagementService → APIMApi
+  | 'HAS_BACKEND'       // APIMApi → APIMBackend
+  | 'RESOLVES_TO'       // FrontDoorOrigin / TM endpoint / APIMBackend → Compute
+  // Cloud Graph — network topology
+  | 'PEERED_WITH'           // VirtualNetwork ↔ VirtualNetwork
+  | 'PROTECTED_BY'          // Subnet → NetworkSecurityGroup
+  | 'HAS_PRIVATE_ENDPOINT'  // PaaS resource → PrivateEndpoint
+  | 'HAS_SERVICE_ENDPOINT'  // Subnet → service type string
+  | 'DEPLOYED_IN'           // Compute → Subnet
+  | 'EXPOSED_VIA'           // Compute → PublicIpAddress
+  | 'HAS_FIREWALL_RULE'     // PaaS resource → FirewallRule (inline metadata)
+  | 'ACCESSIBLE_FROM'       // PaaS resource → Subnet/CIDR (heuristic)
+  // Cloud Graph — identity (replaces ASSIGNED_TO for cloud graph context)
+  | 'ASSIGNED_IDENTITY'  // Compute → ManagedIdentity
   ;
 
 /**

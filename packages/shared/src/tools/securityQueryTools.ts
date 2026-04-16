@@ -221,10 +221,17 @@ export class SecurityQueryTools {
       
       visited.add(id);
 
-      // Get entity directly by ID
-      const entity = await this.qdrant.getEntity(this.tenantId, id);
+      // Get entity directly by ID — try Qdrant first, fall back to Neo4j for
+      // cloud graph nodes (FrontDoorProfile, FrontDoorEndpoint, etc.) that may
+      // not yet be in Qdrant if the re-index hasn't run since the fix.
+      let entity = await this.qdrant.getEntity(this.tenantId, id);
       if (!entity) {
-        console.warn(`Entity ${id} not found`);
+        // Neo4j fallback: cloud graph nodes store their full payload in a
+        // `properties` JSON column.  getNodeById reconstructs a CanonicalEntity.
+        entity = await this.neo4j.getNodeById(this.tenantId, id);
+      }
+      if (!entity) {
+        console.warn(`Entity ${id} not found in Qdrant or Neo4j`);
         continue;
       }
 
@@ -238,7 +245,8 @@ export class SecurityQueryTools {
         relationships: {
           outgoing: await Promise.all(
             outgoing.map(async rel => {
-              const target = await this.qdrant.getEntity(this.tenantId, rel.targetId);
+              let target = await this.qdrant.getEntity(this.tenantId, rel.targetId);
+              if (!target) target = await this.neo4j.getNodeById(this.tenantId, rel.targetId);
               if (target && currentDepth < depth) {
                 // Only traverse to non-module/artifact/dependency/data_store entities, or if we're focused on them
                 const isModule = target.entityType === 'code_module';
@@ -263,7 +271,8 @@ export class SecurityQueryTools {
           ).then(results => results.filter(r => r.target)), // Filter out missing targets
           incoming: await Promise.all(
             incoming.map(async rel => {
-              const source = await this.qdrant.getEntity(this.tenantId, rel.sourceId);
+              let source = await this.qdrant.getEntity(this.tenantId, rel.sourceId);
+              if (!source) source = await this.neo4j.getNodeById(this.tenantId, rel.sourceId);
               if (source && currentDepth < depth) {
                 // Only traverse to non-module/artifact/dependency/data_store entities, or if we're focused on them
                 const isModule = source.entityType === 'code_module';

@@ -176,7 +176,13 @@ export class AssetService {
         qdrant: this.adapter,
       });
 
-      const relationshipGraphResult = await securityQueryTools.getRelationshipGraph(assetId, 1);
+      // Cloud resources may have deep topology chains (e.g. FrontDoor: Profile →
+      // Endpoint → Route → OriginGroup → Origin → backend, which is 6 hops).
+      // Use a larger depth for cloud_resource focus entities so the full graph
+      // is traversed. For all other entity types depth=1 is sufficient.
+      const focusEntityForDepth = await this.adapter.getEntity(tenantId, assetId);
+      const graphDepth = focusEntityForDepth?.entityType === 'cloud_resource' ? 6 : 1;
+      const relationshipGraphResult = await securityQueryTools.getRelationshipGraph(assetId, graphDepth);
       
       if (!relationshipGraphResult || relationshipGraphResult.nodes.length === 0) {
         return { nodes: [], edges: [] };

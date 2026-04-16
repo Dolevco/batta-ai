@@ -46,6 +46,9 @@ export type { RepositorySetupConfig } from './services/repository-setup';
 // Agent registry — used by the worker for pr-validation and future background agents
 export { DataIndexerAgentRegistry, DataIndexerAgentType, createDataIndexerRegistry } from './agents';
 
+// Cloud graph utilities
+export { cloudGraphToQdrantEntities, graphNodeToCloudResource } from './utils/cloud-graph-to-qdrant';
+
 // Queue types
 export * from './types/queue.types';
 

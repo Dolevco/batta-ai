@@ -43,6 +43,7 @@ import { CloudResourceRepository } from './cloud-resource-repository';
 import type { CodeIndexerConfig } from '../connectors/stages/discovery.stage';
 import type { CodeService, DeploymentArtifact, BuildArtifact, RepositoryBriefing } from '@ai-agent/shared';
 import { createDataIndexerRegistry } from '../agents';
+import { cloudGraphToQdrantEntities } from '../utils/cloud-graph-to-qdrant';
 
 export interface TaskProcessorConfig extends CodeIndexerConfig {
   checkpointManager: CheckpointManager;
@@ -459,6 +460,24 @@ export class RepositoryTaskProcessor {
       result.summary.errors.push(...r.errors.map(e => e.message));
     }
 
+    if (cloudDiscovery.cloudGraph && this.config.neo4j) {
+      console.log(`[${task.taskId}] 💾 Persisting cloud graph — ${cloudDiscovery.cloudGraph.nodes.length} nodes, ${cloudDiscovery.cloudGraph.relationships.length} edges...`);
+      try {
+        await this.config.neo4j.storeCloudGraph(cloudDiscovery.cloudGraph);
+
+        // Write cloud graph topology nodes to Qdrant so the SecurityQueryTools BFS
+        // can traverse them. Uses the same 16-char hex IDs stored in Neo4j.
+        // Classification: CONFIDENTIAL — infrastructure topology; tenantId-isolated.
+        const cloudGraphEntities = cloudGraphToQdrantEntities(cloudDiscovery.cloudGraph);
+        if (cloudGraphEntities.length > 0) {
+          console.log(`[${task.taskId}] 💾 Persisting ${cloudGraphEntities.length} cloud graph topology nodes to Qdrant...`);
+          await this.config.qdrant.storeEntities(cloudGraphEntities);
+        }
+      } catch (graphPersistErr: any) {
+        result.summary.errors.push(`Cloud graph persist failed: ${graphPersistErr.message}`);
+      }
+    }
+
     const totalCloudItems = cloudDiscovery.totalResources + cloudDiscovery.totalIdentities + cloudDiscovery.totalRoleAssignments;
     console.log(`[${task.taskId}] ✅ Cloud discovery complete: ${cloudDiscovery.totalResources} resources, ${cloudDiscovery.totalIdentities} identities, ${cloudDiscovery.totalRoleAssignments} IAM assignments, ${cloudDiscovery.relationships.length} relationships`);
 
@@ -788,12 +807,18 @@ export class RepositoryTaskProcessor {
     if (task.options.enableCloudDiscovery && integrations.cloudIntegration) {
       console.log(`[${task.taskId}] Cloud discovery enabled with Microsoft Defender integration`);
       const defenderConfig = (integrations.cloudIntegration as any).config;
+      const subscriptionIds: string[] = defenderConfig.subscriptionIds?.length
+        ? defenderConfig.subscriptionIds
+        : defenderConfig.subscriptionId
+          ? [defenderConfig.subscriptionId]
+          : [];
       this.cloudDiscoveryStage = new CloudDiscoveryStage({
         azure: {
           clientId: defenderConfig.clientId,
           clientSecret: defenderConfig.clientSecret,
           tenantId: defenderConfig.tenantId,
           subscriptionId: defenderConfig.subscriptionId || '',
+          subscriptionIds,
         },
       });
     } else if (task.options.enableCloudDiscovery) {

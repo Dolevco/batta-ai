@@ -3,6 +3,7 @@ export * from './persistence';
 export * from './types';
 export * from './factory';
 export * from './events';
+export * from './types/cloud-graph.types';
 export * from './persistence/qdrantTaskRepository';
 export * from './persistence/qdrantTaskRunRepository';
 export * from './persistence/qdrantAgentRepository';

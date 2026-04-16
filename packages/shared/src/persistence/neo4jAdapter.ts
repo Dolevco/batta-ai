@@ -14,6 +14,7 @@ import {
   RelationshipType,
   CanonicalEntity,
 } from '../types/canonical.types';
+import { CloudGraph, AnyGraphNode, GraphRelationship } from '../types/cloud-graph.types';
 
 export interface Neo4jConfig {
   uri: string;
@@ -309,6 +310,88 @@ export class Neo4jAdapter {
                 confidence: relationship.confidence,
                 metadata: JSON.stringify(relationship.metadata),
               }
+            );
+          }
+        });
+      }
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Store a CloudGraph (GraphNode nodes + GraphRelationship edges) produced by
+   * CloudGraphBuilder.  Nodes are stored with their nodeType as the Neo4j label
+   * so that Front Door, VNet, NSG, etc. appear as first-class graph citizens.
+   *
+   * Idempotent: MERGE on (tenant_id, id) so re-runs don't duplicate data.
+   */
+  async storeCloudGraph(graph: CloudGraph): Promise<void> {
+    if (graph.nodes.length === 0) return;
+
+    const session = this.driver.session({ database: this.database });
+    try {
+      // Ensure tenant node exists for every unique tenant in the graph
+      const tenantIds = [...new Set(graph.nodes.map(n => n.tenantId))];
+      for (const tenantId of tenantIds) {
+        await this.ensureTenant(tenantId);
+      }
+
+      const chunkSize = 100;
+
+      // ── Nodes ──────────────────────────────────────────────────────────────
+      for (let i = 0; i < graph.nodes.length; i += chunkSize) {
+        const chunk = graph.nodes.slice(i, i + chunkSize);
+        await session.executeWrite(async tx => {
+          for (const node of chunk) {
+            const label = node.nodeType; // e.g. 'FrontDoorProfile', 'FrontDoorEndpoint', …
+            const props: Record<string, any> = {
+              tenant_id: node.tenantId,
+              id: node.id,
+              nodeType: node.nodeType,
+              cloudProvider: node.cloudProvider,
+              providerResourceId: node.providerResourceId,
+              displayName: node.displayName,
+              region: node.region,
+              indexedAt: node.indexedAt,
+              dataClassification: node.dataClassification,
+              internetExposed: node.internetExposed,
+              tags: JSON.stringify(node.tags),
+              // Flatten all extra fields as JSON so nothing is lost
+              properties: JSON.stringify(node),
+            };
+            await tx.run(
+              `MERGE (n:${label} {tenant_id: $tenant_id, id: $id})
+               SET n += $props
+               WITH n
+               MATCH (t:Tenant {id: $tenant_id})
+               MERGE (t)-[:OWNS]->(n)`,
+              { tenant_id: node.tenantId, id: node.id, props },
+            );
+          }
+        });
+      }
+
+      // ── Relationships ──────────────────────────────────────────────────────
+      for (let i = 0; i < graph.relationships.length; i += chunkSize) {
+        const chunk = graph.relationships.slice(i, i + chunkSize);
+        await session.executeWrite(async tx => {
+          for (const rel of chunk) {
+            const relType = this.sanitizeRelType(rel.type);
+            await tx.run(
+              `MATCH (source {tenant_id: $tenant_id, id: $sourceId})
+               MATCH (target {tenant_id: $tenant_id, id: $targetId})
+               MERGE (source)-[r:${relType} {tenant_id: $tenant_id, id: $id}]->(target)
+               SET r.confidence = $confidence,
+                   r.metadata   = $metadata`,
+              {
+                tenant_id: rel.tenantId,
+                id: rel.id,
+                sourceId: rel.sourceId,
+                targetId: rel.targetId,
+                confidence: rel.confidence,
+                metadata: JSON.stringify(rel.metadata ?? {}),
+              },
             );
           }
         });
@@ -749,5 +832,97 @@ export class Neo4jAdapter {
       confidence: props.confidence,
       metadata: typeof props.metadata === 'string' ? JSON.parse(props.metadata) : props.metadata,
     };
+  }
+
+  /**
+   * Get a node by ID directly from Neo4j.
+   *
+   * Used as a Qdrant fallback in the BFS: cloud graph nodes (FrontDoorProfile,
+   * FrontDoorEndpoint, etc.) are stored in Neo4j with a `properties` JSON column
+   * that carries the full AnyGraphNode payload.  When Qdrant doesn't have a node
+   * (e.g. before the next re-index run), this method reconstructs a
+   * CloudResource-compatible CanonicalEntity from that blob so the BFS can
+   * continue traversing.
+   *
+   * Returns null if the node doesn't exist or has no parseable properties blob.
+   */
+  async getNodeById(tenantId: TenantId, nodeId: EntityId): Promise<CanonicalEntity | null> {
+    const session = this.driver.session({ database: this.database });
+    try {
+      const result = await session.run(
+        `MATCH (n {id: $nodeId})
+         WHERE n.tenant_id = $tenantId OR n.tenantId = $tenantId
+         RETURN n.id AS id, n.nodeType AS nodeType, n.displayName AS displayName,
+                n.region AS region, n.properties AS propertiesJson,
+                n.providerResourceId AS providerResourceId,
+                n.cloudProvider AS cloudProvider,
+                n.dataClassification AS dataClassification
+         LIMIT 1`,
+        { nodeId, tenantId },
+      );
+      if (result.records.length === 0) return null;
+
+      const rec = result.records[0];
+      const propertiesJson: string | null = rec.get('propertiesJson');
+
+      // Prefer the full properties blob stored by storeCloudGraph
+      if (propertiesJson) {
+        try {
+          const raw = JSON.parse(propertiesJson);
+          const now = raw.indexedAt ?? new Date().toISOString();
+          return {
+            id: raw.id ?? rec.get('id'),
+            tenantId,
+            entityType: 'cloud_resource',
+            resourceType: 'network',
+            cloudProvider: raw.cloudProvider === 'synthetic' ? 'azure' : (raw.cloudProvider ?? 'azure'),
+            name: raw.displayName ?? rec.get('displayName') ?? raw.id,
+            resourceId: raw.providerResourceId,
+            region: raw.region,
+            createdAt: now,
+            updatedAt: now,
+            lastIndexedAt: now,
+            confidence: 'deterministic',
+            metadata: {
+              nodeType: raw.nodeType,
+              dataClassification: raw.dataClassification,
+              internetExposed: raw.internetExposed,
+              tags: raw.tags ?? {},
+              // Include all node-type-specific fields (sku, patterns, etc.)
+              ...Object.fromEntries(
+                Object.entries(raw).filter(([k]) =>
+                  !['id','tenantId','cloudProvider','nodeType','providerResourceId',
+                    'displayName','region','indexedAt','dataClassification',
+                    'internetExposed','tags'].includes(k)
+                )
+              ),
+            },
+          } as CanonicalEntity;
+        } catch {
+          // fall through to minimal reconstruction below
+        }
+      }
+
+      // Minimal reconstruction without properties blob
+      const nodeType: string = rec.get('nodeType') ?? 'unknown';
+      const now = new Date().toISOString();
+      return {
+        id: rec.get('id'),
+        tenantId,
+        entityType: 'cloud_resource',
+        resourceType: 'network',
+        cloudProvider: (rec.get('cloudProvider') as any) ?? 'azure',
+        name: rec.get('displayName') ?? rec.get('id'),
+        resourceId: rec.get('providerResourceId'),
+        region: rec.get('region'),
+        createdAt: now,
+        updatedAt: now,
+        lastIndexedAt: now,
+        confidence: 'deterministic',
+        metadata: { nodeType },
+      } as CanonicalEntity;
+    } finally {
+      await session.close();
+    }
   }
 }
