@@ -42,6 +42,9 @@ import {
   NetworkSecurityGroupNode,
   PrivateEndpointNode,
   ManagedIdentityNode,
+  ContainerAppNode,
+  StorageAccountNode,
+  WebAppNode,
   IngressGraph,
   NetworkTopology,
   IdentityGraph,
@@ -96,7 +99,12 @@ export class CloudGraphBuilder {
     const ingressNodes = transformIngressGraph(ingressGraph, tenantId, indexedAt);
     nodes.push(...ingressNodes);
     relationships.push(...this.buildIngressEdges(internet.id, ingressNodes, tenantId));
-    relationships.push(...this.buildOriginBackendEdges(ingressNodes, resources.resources, tenantId));
+
+    // ── Step 2b: Compute / PaaS nodes (Container Apps, Storage Accounts, Web Apps) ──
+    const computeNodes = this.buildComputeNodes(resources.resources, tenantId, indexedAt);
+    nodes.push(...computeNodes);
+
+    relationships.push(...this.buildOriginBackendEdges(ingressNodes, computeNodes, resources.resources, tenantId));
 
     // ── Step 3: Network topology ──────────────────────────────────────────
     const rawVnets = resources.resources.filter(
@@ -238,73 +246,172 @@ export class CloudGraphBuilder {
   }
 
   // ============================================================================
+  // Compute / PaaS nodes — Container Apps, Storage Accounts, Web Apps
+  // ============================================================================
+
+  /**
+   * Build first-class graph nodes for compute/PaaS resources that may be referenced
+   * as Front Door or Traffic Manager backends. Only minimal, non-secret fields are
+   * stored. All values are null-coerced from the unvalidated raw API response.
+   *
+   * Security: raw values are coerced to string/number/boolean primitives only;
+   * no objects or arrays are stored directly, preventing prototype pollution.
+   */
+  private buildComputeNodes(
+    rawResources: Record<string, any>[],
+    tenantId: string,
+    indexedAt: string,
+  ): AnyGraphNode[] {
+    const nodes: AnyGraphNode[] = [];
+
+    for (const r of rawResources) {
+      // Defensive: all field accesses null-coerced to prevent prototype pollution from raw API data
+      const type = String(r.type ?? '').toLowerCase();
+      const id: string = String(r.id ?? '');
+      if (!id) continue;
+
+      const base = {
+        id: nodeId(tenantId, id),
+        tenantId,
+        cloudProvider: 'azure' as const,
+        providerResourceId: id.toLowerCase(),
+        displayName: String(r.name ?? id),
+        region: String(r.location ?? ''),
+        tags: sanitizeTags(r.tags),
+        indexedAt,
+        dataClassification: 'confidential' as const,
+        internetExposed: false,
+      };
+
+      if (type === 'microsoft.app/containerapps') {
+        const props = r.properties ?? {};
+        const ingress = props.configuration?.ingress ?? {};
+        const fqdn = String(ingress.fqdn ?? '').toLowerCase();
+        const node: ContainerAppNode = {
+          ...base,
+          nodeType: 'ContainerApp',
+          fqdn,
+          environmentId: String(props.environmentId ?? '').toLowerCase(),
+          externalIngress: ingress.external === true,
+          targetPort: Number(ingress.targetPort ?? 0),
+        };
+        nodes.push(node);
+
+      } else if (type === 'microsoft.storage/storageaccounts') {
+        const props = r.properties ?? {};
+        const endpoints = props.primaryEndpoints ?? {};
+        const staticWebHostname = safeHostname(String(endpoints.web ?? ''));
+        const blobHostname = safeHostname(String(endpoints.blob ?? ''));
+        const node: StorageAccountNode = {
+          ...base,
+          nodeType: 'StorageAccount',
+          staticWebHostname,
+          blobHostname,
+          sku: String(r.sku?.name ?? ''),
+          kind: String(r.kind ?? ''),
+          staticWebsiteEnabled: !!(props.staticWebsite?.enabled),
+        };
+        nodes.push(node);
+
+      } else if (type === 'microsoft.web/sites') {
+        const props = r.properties ?? {};
+        const node: WebAppNode = {
+          ...base,
+          nodeType: 'WebApp',
+          defaultHostname: String(props.defaultHostName ?? '').toLowerCase(),
+          kind: String(r.kind ?? ''),
+          vnetSubnetId: props.virtualNetworkSubnetId
+            ? String(props.virtualNetworkSubnetId).toLowerCase()
+            : undefined,
+        };
+        nodes.push(node);
+      }
+    }
+
+    return nodes;
+  }
+
+  // ============================================================================
   // Origin → backend resource edges
   // ============================================================================
 
   private buildOriginBackendEdges(
     ingressNodes: AnyGraphNode[],
+    computeNodes: AnyGraphNode[],
     rawResources: Record<string, any>[],
     tenantId: string,
   ): GraphRelationship[] {
     const rels: GraphRelationship[] = [];
 
-    // Build hostname → ARM resource ID index from raw resources.
-    // Matches Container App FQDNs, Web App default hostnames, and Storage static-web endpoints.
-    const hostToResourceId = new Map<string, string>();
+    // Build hostname → graph node ID index from first-class compute nodes.
+    // This allows Front Door origin hostnames to resolve directly to ContainerApp,
+    // StorageAccount, or WebApp nodes in the graph.
+    const hostToNodeId = new Map<string, string>();
+
+    for (const node of computeNodes) {
+      if (node.nodeType === 'ContainerApp') {
+        const n = node as ContainerAppNode;
+        if (n.fqdn) hostToNodeId.set(n.fqdn, n.id);
+      } else if (node.nodeType === 'StorageAccount') {
+        const n = node as StorageAccountNode;
+        if (n.staticWebHostname) hostToNodeId.set(n.staticWebHostname, n.id);
+        if (n.blobHostname) hostToNodeId.set(n.blobHostname, n.id);
+      } else if (node.nodeType === 'WebApp') {
+        const n = node as WebAppNode;
+        if (n.defaultHostname) hostToNodeId.set(n.defaultHostname, n.id);
+      }
+    }
+
+    // Also retain legacy cloud_resource fallback for any resource types not yet promoted to
+    // first-class graph nodes, so existing edges are not broken.
+    const hostToLegacyNodeId = new Map<string, string>();
     for (const r of rawResources) {
-      const type = (r.type ?? '').toLowerCase();
-      const id: string = r.id ?? '';
+      const type = String(r.type ?? '').toLowerCase();
+      const id: string = String(r.id ?? '');
       if (!id) continue;
 
       if (type === 'microsoft.app/containerapps') {
-        const fqdn: string = r.properties?.configuration?.ingress?.fqdn ?? '';
-        if (fqdn) hostToResourceId.set(fqdn.toLowerCase(), id);
+        const fqdn = String(r.properties?.configuration?.ingress?.fqdn ?? '').toLowerCase();
+        if (fqdn && !hostToNodeId.has(fqdn)) hostToLegacyNodeId.set(fqdn, id);
       }
-
       if (type === 'microsoft.web/sites') {
-        const defaultHost: string = r.properties?.defaultHostName ?? '';
-        if (defaultHost) hostToResourceId.set(defaultHost.toLowerCase(), id);
+        const h = String(r.properties?.defaultHostName ?? '').toLowerCase();
+        if (h && !hostToNodeId.has(h)) hostToLegacyNodeId.set(h, id);
       }
-
       if (type === 'microsoft.storage/storageaccounts') {
-        // Static website endpoint: <account>.z<n>.web.core.windows.net
-        const webEndpoint: string = r.properties?.primaryEndpoints?.web ?? '';
-        if (webEndpoint) {
-          try {
-            const host = new URL(webEndpoint).hostname.toLowerCase();
-            if (host) hostToResourceId.set(host, id);
-          } catch { /* malformed URL — skip */ }
-        }
-        const blobEndpoint: string = r.properties?.primaryEndpoints?.blob ?? '';
-        if (blobEndpoint) {
-          try {
-            const host = new URL(blobEndpoint).hostname.toLowerCase();
-            if (host) hostToResourceId.set(host, id);
-          } catch { /* malformed URL — skip */ }
+        const webH = safeHostname(String(r.properties?.primaryEndpoints?.web ?? ''));
+        if (webH && !hostToNodeId.has(webH)) hostToLegacyNodeId.set(webH, id);
+        const blobH = safeHostname(String(r.properties?.primaryEndpoints?.blob ?? ''));
+        if (blobH && !hostToNodeId.has(blobH)) hostToLegacyNodeId.set(blobH, id);
+      }
+    }
+
+    // FrontDoorOrigin → backend graph node (RESOLVES_TO)
+    for (const origin of ingressNodes.filter((n): n is FrontDoorOriginNode => n.nodeType === 'FrontDoorOrigin')) {
+      const hostname = String(origin.hostName ?? '').toLowerCase();
+      if (!hostname) continue;
+
+      const graphNodeId = hostToNodeId.get(hostname);
+      if (graphNodeId) {
+        // Preferred: resolved to a first-class compute/PaaS graph node
+        rels.push(makeRel(origin.id, graphNodeId, 'RESOLVES_TO', tenantId, 'deterministic'));
+      } else {
+        const legacyArmId = hostToLegacyNodeId.get(hostname);
+        if (legacyArmId) {
+          // Fallback: resolve to legacy cloud_resource entity for backward compatibility
+          const backendNodeId = cloudResourceEntityId(tenantId, legacyArmId);
+          rels.push(makeRel(origin.id, backendNodeId, 'RESOLVES_TO', tenantId, 'heuristic'));
         }
       }
     }
 
-    // Bridge FrontDoorProfile and FrontDoorEndpoint nodes to their legacy cloud_resource counterparts
-    // so that traversal starting from the cloud_resource entity can reach the full graph topology.
-    /*for (const node of ingressNodes) {
-      if (node.nodeType === 'FrontDoorProfile' || node.nodeType === 'FrontDoorEndpoint') {
-        const legacyId = cloudResourceEntityId(tenantId, node.providerResourceId);
-        // cloud_resource → FrontDoorProfile/Endpoint (REPRESENTS): legacy resource IS the FD node
-        rels.push(makeRel(legacyId, node.id, 'REPRESENTS', tenantId, 'deterministic'));
-      }
-    }*/
-
-    // FrontDoorOrigin → backend cloud_resource (RESOLVES_TO)
-    for (const origin of ingressNodes.filter((n): n is FrontDoorOriginNode => n.nodeType === 'FrontDoorOrigin')) {
-      const hostname = (origin.hostName ?? '').toLowerCase();
-      if (!hostname) continue;
-      const backendResourceId = hostToResourceId.get(hostname);
-      if (backendResourceId) {
-        // Use cloudResourceEntityId to match the ID format used by the legacy connector
-        // (stored in both Qdrant and Neo4j as cloud_resource:<hash>)
-        const backendNodeId = cloudResourceEntityId(tenantId, backendResourceId);
-        rels.push(makeRel(origin.id, backendNodeId, 'RESOLVES_TO', tenantId, 'heuristic'));
+    // APIMBackend → backend graph node (RESOLVES_TO) when URL hostname matches a compute node
+    for (const backend of ingressNodes.filter((n): n is APIMBackendNode => n.nodeType === 'APIMBackend')) {
+      const backendHost = safeHostname(backend.url ?? '');
+      if (!backendHost) continue;
+      const graphNodeId = hostToNodeId.get(backendHost);
+      if (graphNodeId) {
+        rels.push(makeRel(backend.id, graphNodeId, 'RESOLVES_TO', tenantId, 'heuristic'));
       }
     }
 
@@ -680,6 +787,37 @@ function makeRel(
     confidence,
     metadata,
   };
+}
+
+/**
+ * Safely extract the hostname from a URL string.
+ * Returns empty string if the URL is malformed — never throws.
+ * Security: URL objects do not execute scripts; this is a parse-only operation.
+ */
+function safeHostname(url: string): string {
+  if (!url) return '';
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Sanitize raw Azure resource tags: keep only string key/value pairs,
+ * reject any non-primitive values to prevent prototype pollution.
+ * Secret-pattern detection is handled by node-sanitizer upstream;
+ * this function only type-narrows to Record<string, string>.
+ */
+function sanitizeTags(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof k === 'string' && typeof v === 'string') {
+      result[k] = v;
+    }
+  }
+  return result;
 }
 
 function extractSubnetId(resource: Record<string, any>): string | null {

@@ -76,6 +76,10 @@ export type GraphNodeType =
   | 'Subnet'
   | 'NetworkSecurityGroup'
   | 'PrivateEndpoint'
+  // Compute / PaaS — backend targets
+  | 'ContainerApp'
+  | 'StorageAccount'
+  | 'WebApp'
   // Identity
   | 'ManagedIdentity'
   | 'ServicePrincipal';
@@ -257,6 +261,57 @@ export interface PrivateEndpointNode extends GraphNode {
 }
 
 // ============================================================================
+// Compute / PaaS — backend targets
+// ============================================================================
+
+/**
+ * Azure Container App backend.
+ * Classification: CONFIDENTIAL — exposes network ingress FQDN and environment topology.
+ * Never log hostName or environmentId raw values.
+ */
+export interface ContainerAppNode extends GraphNode {
+  nodeType: 'ContainerApp';
+  /** External FQDN assigned by Container Apps ingress, e.g. <app>.<env>.<region>.azurecontainerapps.io */
+  fqdn: string;
+  /** ARM ID of the Container Apps environment */
+  environmentId: string;
+  /** Whether external ingress is enabled */
+  externalIngress: boolean;
+  /** Target port of the container app */
+  targetPort: number;
+}
+
+/**
+ * Azure Storage Account backend.
+ * Classification: CONFIDENTIAL — exposes storage endpoint hostnames.
+ * Never log endpoint URLs raw.
+ */
+export interface StorageAccountNode extends GraphNode {
+  nodeType: 'StorageAccount';
+  /** Static-website endpoint hostname, e.g. <account>.z<n>.web.core.windows.net */
+  staticWebHostname: string;
+  /** Blob endpoint hostname, e.g. <account>.blob.core.windows.net */
+  blobHostname: string;
+  sku: string;
+  kind: string;
+  /** Whether static website hosting is enabled */
+  staticWebsiteEnabled: boolean;
+}
+
+/**
+ * Azure Web App (App Service) backend.
+ * Classification: CONFIDENTIAL — exposes default hostname.
+ */
+export interface WebAppNode extends GraphNode {
+  nodeType: 'WebApp';
+  /** Default hostname assigned by App Service, e.g. <app>.azurewebsites.net */
+  defaultHostname: string;
+  kind: string;
+  /** VNet integration subnet ARM ID, if configured */
+  vnetSubnetId?: string;
+}
+
+// ============================================================================
 // Identity
 // ============================================================================
 
@@ -295,6 +350,9 @@ export type AnyGraphNode =
   | SubnetNode
   | NetworkSecurityGroupNode
   | PrivateEndpointNode
+  | ContainerAppNode
+  | StorageAccountNode
+  | WebAppNode
   | ManagedIdentityNode
   | ServicePrincipalNode;
 

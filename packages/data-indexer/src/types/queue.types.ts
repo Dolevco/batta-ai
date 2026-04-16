@@ -33,6 +33,12 @@ export interface IndexRepositoryTask extends BaseTaskData {
   repository: RepositoryHandle;
   options: {
     enableCloudDiscovery?: boolean;
+    /**
+     * 'cloud' skips all code extraction stages and runs only cloud discovery.
+     * undefined / 'all' runs the full pipeline.
+     * 'code' runs only code extraction stages (no cloud discovery).
+     */
+    scope?: 'all' | 'code' | 'cloud';
     /** 'full' (default) re-indexes everything; 'incremental' only processes changed files */
     runType?: 'full' | 'incremental';
     /**

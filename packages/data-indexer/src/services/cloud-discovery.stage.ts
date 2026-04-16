@@ -26,6 +26,7 @@ import {
   AzureIdentity,
   IamRoleAssignment,
   CloudGraph,
+  RawResourceBatch,
 } from '@ai-agent/shared';
 import {
   AzureResourceGraphConnector,
@@ -134,8 +135,24 @@ export class CloudDiscoveryStage {
             const azureProvider = this.providerRegistry.get('azure');
             const scope: ProviderScope = { provider: 'azure', subscriptionIds };
 
-            const [resourceBatch, ingressGraph, networkTopology, identityGraph] = await Promise.all([
-              azureProvider.fetchResources(scope),
+            // Security: azureRawResources was fetched with subscriptions:[] (all accessible
+            // subscriptions) which covers cross-subscription deployments such as a Front Door
+            // in one subscription pointing to a Container App in another. Reuse that batch as
+            // the RawResourceBatch so buildComputeNodes() sees the full resource inventory.
+            // Data classification: 'confidential' — tenantId isolation enforced by graph builder
+            // and downstream persistence adapters (Neo4j/Qdrant). No raw data is logged here.
+            const crossSubResourceBatch: RawResourceBatch = {
+              resources: azureRawResources as Record<string, any>[],
+            };
+
+            // Audit trail: log resource count only — no raw resource data emitted
+            console.info('[CloudDiscoveryStage] Cross-subscription resource batch for graph builder', {
+              tenantId,
+              provider: 'azure',
+              resourceCount: azureRawResources.length,
+            });
+
+            const [ingressGraph, networkTopology, identityGraph] = await Promise.all([
               azureProvider.fetchIngressGraph(scope),
               azureProvider.fetchNetworkTopology(scope),
               azureProvider.fetchIdentityGraph(scope),
@@ -143,7 +160,7 @@ export class CloudDiscoveryStage {
 
             cloudGraph = new CloudGraphBuilder().build({
               tenantId,
-              resources: resourceBatch,
+              resources: crossSubResourceBatch,
               ingressGraph,
               networkTopology,
               identityGraph,

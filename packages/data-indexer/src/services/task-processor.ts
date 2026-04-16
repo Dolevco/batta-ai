@@ -174,10 +174,36 @@ export class RepositoryTaskProcessor {
     let headCommitSha: string | undefined;
 
     try {
-      // ── Setup: integrations + repository clone ───────────────────────────
+      // ── Setup: integrations ─────────────────────────────────────────────
       console.log(`[${task.taskId}] Fetching integrations for tenant ${task.tenantId}`);
       await this.integrationFetcher.initialize();
       const integrations = await this.integrationFetcher.fetchIntegrations(task.tenantId);
+
+      // ── Setup cloud discovery from fetched integration ───────────────────
+      this.setupCloudDiscovery(task, integrations);
+
+      // ── Cloud-only path: skip code extraction entirely ───────────────────
+      // When scope='cloud' we only need cloud discovery — no repo clone needed.
+      if (task.options.scope === 'cloud') {
+        if (!this.cloudDiscoveryStage) {
+          throw new Error(`Cloud-only scan requested but no cloud integration found for tenant ${task.tenantId}`);
+        }
+        const { resolvedRunType } = await this.resolveRunType(task);
+        indexingRun = await this.createIndexingRun(task, resolvedRunType, undefined);
+
+        const entities: CanonicalEntity[] = [];
+        const relationships: Relationship[] = [];
+        await this.runCloudDiscoveryStage(task, entities, relationships, result, onStageChange);
+
+        result.summary.entitiesCreated = entities.length;
+        result.summary.relationshipsCreated = relationships.length;
+        result.summary.runType = resolvedRunType;
+        result.success = true;
+        result.duration = Date.now() - startTime;
+        await this.completeIndexingRun(task, indexingRun, undefined, result);
+        console.log(`[${task.taskId}] Cloud-only task completed in ${result.duration}ms`);
+        return result;
+      }
 
       if (!integrations.codeIntegrations.length) {
         throw new Error(`No code integration found for tenant ${task.tenantId}`);
@@ -212,9 +238,6 @@ export class RepositoryTaskProcessor {
       // ── Create IndexingRun audit record ──────────────────────────────────
       // Security: tenantId comes from the task (set by API from JWT), not user input.
       indexingRun = await this.createIndexingRun(task, resolvedRunType, resolvedSinceCommit);
-
-      // ── Setup cloud discovery from fetched integration ───────────────────
-      this.setupCloudDiscovery(task, integrations);
 
       // ── Checkpoint resume ────────────────────────────────────────────────
       const checkpoint = await this.checkpointManager.getCheckpoint(task.taskId);
@@ -460,7 +483,11 @@ export class RepositoryTaskProcessor {
       result.summary.errors.push(...r.errors.map(e => e.message));
     }
 
-    if (cloudDiscovery.cloudGraph && this.config.neo4j) {
+    if (!cloudDiscovery.cloudGraph) {
+      console.warn(`[${task.taskId}] ⚠️  No cloud graph produced — graph topology will not be available. Errors: ${cloudDiscovery.errors.join('; ') || 'none'}`);
+    } else if (!this.config.neo4j) {
+      console.warn(`[${task.taskId}] ⚠️  Cloud graph produced but Neo4j is not configured — graph topology will not be persisted.`);
+    } else {
       console.log(`[${task.taskId}] 💾 Persisting cloud graph — ${cloudDiscovery.cloudGraph.nodes.length} nodes, ${cloudDiscovery.cloudGraph.relationships.length} edges...`);
       try {
         await this.config.neo4j.storeCloudGraph(cloudDiscovery.cloudGraph);
