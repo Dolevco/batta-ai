@@ -85,15 +85,6 @@ function mapToDfdNodeType(entityType: string): string {
 
 // ── Entity category grouping ──────────────────────────────────────────────────
 
-const GROUP_ORDER = [
-  'external_entity',
-  'identity',
-  'process',
-  'service',
-  'data_store',
-  'trust_boundary',
-];
-
 const GROUP_LABELS: Record<string, string> = {
   process:         'Services',
   data_store:      'Data Stores',
@@ -127,13 +118,98 @@ function isSecurityEdge(edgeType: string): boolean {
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-const NODE_W    = 120;
-const NODE_H    = 100;
-const V_GAP     = 48;
-const H_GAP     = 100;
-const TB_PAD_X  = 32;
-const TB_PAD_TOP = 52;
-const TB_PAD_BOT = 28;
+const NODE_W     = 120;
+const NODE_H     = 100;
+const H_GAP      = 80;   // horizontal gap between nodes in the same rank
+const ROW_H      = 180;  // vertical distance between rank centres
+const BAND_PAD_X = 24;   // horizontal padding inside boundary band
+const BAND_PAD_Y = 28;   // vertical padding above/below nodes inside band
+
+// ── Rank assignment (edge-aware, Sugiyama-inspired) ───────────────────────────
+//
+// 1. Build an in-degree map from the edge list.
+// 2. Seed the BFS with "root" nodes: nodes whose DFD type is external_entity,
+//    nodes explicitly named 'internet', or (fallback) all zero-in-degree nodes.
+// 3. BFS assigns rank = max(predecessor rank) + 1  (longest-path rank).
+// 4. Nodes unreachable from any root fall back to a rank derived from GROUP_ORDER.
+
+function assignRanks(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
+  const inDegree  = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+  const outEdges  = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
+
+  for (const e of edges) {
+    if (inDegree.has(e.to))   inDegree.set(e.to,   (inDegree.get(e.to)!   + 1));
+    if (outEdges.has(e.from)) outEdges.get(e.from)!.push(e.to);
+  }
+
+  const rank = new Map<string, number>();
+
+  // Prefer explicit internet/external nodes as roots; fall back to zero-in-degree
+  const roots = nodes.filter((n) => {
+    const dfdType = mapToDfdNodeType(n.type);
+    return dfdType === 'external_entity' || n.id.toLowerCase() === 'internet' || n.label.toLowerCase() === 'internet';
+  });
+  const seedIds = roots.length > 0
+    ? roots.map((n) => n.id)
+    : nodes.filter((n) => inDegree.get(n.id) === 0).map((n) => n.id);
+
+  // BFS — longest-path (use relaxation, not simple BFS, to handle multi-paths)
+  for (const id of seedIds) rank.set(id, 0);
+
+  // Topological relaxation: iterate until stable (handles DAG correctly)
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const e of edges) {
+      const srcRank = rank.get(e.from);
+      if (srcRank === undefined) continue;
+      const newRank = srcRank + 1;
+      if ((rank.get(e.to) ?? -1) < newRank) {
+        rank.set(e.to, newRank);
+        changed = true;
+      }
+    }
+  }
+
+  // Fallback for disconnected nodes: use GROUP_ORDER position as rank
+  const GROUP_RANK: Record<string, number> = {
+    external_entity: 0,
+    identity:        1,
+    process:         2,
+    service:         3,
+    data_store:      4,
+    trust_boundary:  5,
+  };
+  for (const n of nodes) {
+    if (!rank.has(n.id)) {
+      rank.set(n.id, GROUP_RANK[mapToDfdNodeType(n.type)] ?? 3);
+    }
+  }
+
+  return rank;
+}
+
+// ── Barycenter sort — reduce edge crossings within a rank ─────────────────────
+//
+// For each node in rank R, compute the average X of its already-placed
+// neighbors in rank R-1. Sort by that average to minimise crossings.
+
+function barycenterSort(
+  rankNodes: GraphNode[],
+  edges: GraphEdge[],
+  placedX: Map<string, number>,
+): GraphNode[] {
+  const score = (n: GraphNode): number => {
+    const neighborXs: number[] = [];
+    for (const e of edges) {
+      if (e.to === n.id && placedX.has(e.from))   neighborXs.push(placedX.get(e.from)!);
+      if (e.from === n.id && placedX.has(e.to))   neighborXs.push(placedX.get(e.to)!);
+    }
+    if (neighborXs.length === 0) return Infinity; // no neighbors yet → stable sort to end
+    return neighborXs.reduce((a, b) => a + b, 0) / neighborXs.length;
+  };
+  return [...rankNodes].sort((a, b) => score(a) - score(b));
+}
 
 // ── Layout builder ────────────────────────────────────────────────────────────
 
@@ -147,64 +223,78 @@ function buildLayout(
   const rfNodes: Node[] = [];
   const rfEdges: Edge[] = [];
 
-  // Group nodes by category
-  const groups = new Map<string, GraphNode[]>();
+  // 1. Assign a rank (layer) to every node based on graph topology
+  const rankMap = assignRanks(inputNodes, inputEdges);
+
+  // 2. Group nodes by rank
+  const byRank = new Map<number, GraphNode[]>();
   for (const n of inputNodes) {
-    const key = getGroupKey(n);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(n);
+    const r = rankMap.get(n.id) ?? 0;
+    if (!byRank.has(r)) byRank.set(r, []);
+    byRank.get(r)!.push(n);
   }
 
-  // Sort groups by preferred order; focus node's group goes first if focus exists
-  const focusGroup = focusNodeId
-    ? getGroupKey(inputNodes.find((n) => n.id === focusNodeId) ?? inputNodes[0])
-    : null;
+  const sortedRanks = [...byRank.keys()].sort((a, b) => a - b);
 
-  const sortedGroups = [...groups.entries()].sort(([a], [b]) => {
-    if (a === focusGroup) return -1;
-    if (b === focusGroup) return 1;
-    return GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b);
-  });
+  // 3. Place nodes rank by rank, top→bottom
+  const placedX = new Map<string, number>(); // nodeId → final X centre (for barycenter)
 
-  // Compute canvas height so all columns can be vertically centred
-  const groupHeights = sortedGroups.map(([, gnodes]) => {
-    const innerH = gnodes.length * NODE_H + (gnodes.length - 1) * V_GAP;
-    return innerH + TB_PAD_TOP + TB_PAD_BOT;
-  });
-  const canvasH = Math.max(...groupHeights, 200) + 80;
+  for (const r of sortedRanks) {
+    const rankNodes = byRank.get(r)!;
 
-  // Layout: columns of group containers, left→right
-  let cursorX = 0;
+    // Sort within rank to minimise crossings
+    const sorted = barycenterSort(rankNodes, inputEdges, placedX);
 
-  sortedGroups.forEach(([groupKey, gnodes], idx) => {
-    const innerH = gnodes.length * NODE_H + (gnodes.length - 1) * V_GAP;
-    const boxW = NODE_W + TB_PAD_X * 2;
-    const boxH = innerH + TB_PAD_TOP + TB_PAD_BOT;
-    const boxY = Math.round((canvasH - boxH) / 2);
+    // Total row width
+    const rowW = sorted.length * NODE_W + (sorted.length - 1) * H_GAP;
+    const startX = -rowW / 2;
+    const rowY   = r * ROW_H;
 
-    const groupId = `group-${groupKey}`;
-    rfNodes.push({
-      id: groupId,
-      type: 'dfdBoundary',
-      position: { x: cursorX, y: boxY },
-      data: { label: GROUP_LABELS[groupKey] ?? groupKey, theme: groupTheme(groupKey), visible: showBoundaries },
-      style: { width: boxW, height: boxH, zIndex: -1 },
-      selectable: false,
+    sorted.forEach((n, i) => {
+      const x = startX + i * (NODE_W + H_GAP);
+      const y = rowY;
+      placedX.set(n.id, x + NODE_W / 2);
+      rfNodes.push(makeDfdNode(n, x, y, n.id === focusNodeId));
     });
+  }
 
-    gnodes.forEach((n, i) => {
-      const isFocus = n.id === focusNodeId;
-      // Absolute positions (no parent constraint so nodes can be dragged freely)
-      rfNodes.push(
-        makeDfdNode(n, cursorX + TB_PAD_X, boxY + TB_PAD_TOP + i * (NODE_H + V_GAP), isFocus),
-      );
-    });
+  // 4. Boundary bands — one horizontal band per rank (shown when showBoundaries=true)
+  //    Each band spans the full width of its rank row.
+  if (showBoundaries) {
+    for (const r of sortedRanks) {
+      const rankNodes = byRank.get(r)!;
+      if (rankNodes.length === 0) continue;
 
-    cursorX += boxW + H_GAP;
-    void idx; // suppress unused warning
-  });
+      // Determine the dominant DFD group for label/theme
+      const groupCounts = new Map<string, number>();
+      for (const n of rankNodes) {
+        const g = getGroupKey(n);
+        groupCounts.set(g, (groupCounts.get(g) ?? 0) + 1);
+      }
+      const dominantGroup = [...groupCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
 
-  // Edges
+      const rowW   = rankNodes.length * NODE_W + (rankNodes.length - 1) * H_GAP;
+      const bandW  = rowW + BAND_PAD_X * 2;
+      const bandX  = -rowW / 2 - BAND_PAD_X;
+      const bandY  = r * ROW_H - BAND_PAD_Y;
+      const bandH  = NODE_H + BAND_PAD_Y * 2;
+
+      rfNodes.push({
+        id: `group-rank-${r}`,
+        type: 'dfdBoundary',
+        position: { x: bandX, y: bandY },
+        data: {
+          label: GROUP_LABELS[dominantGroup] ?? dominantGroup,
+          theme: groupTheme(dominantGroup),
+          visible: true,
+        },
+        style: { width: bandW, height: bandH, zIndex: -1 },
+        selectable: false,
+      });
+    }
+  }
+
+  // 5. Edges
   inputEdges.forEach((e, i) => {
     const color  = edgeColor(e.type);
     const isSec  = isSecurityEdge(e.type);
