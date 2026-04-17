@@ -4,7 +4,9 @@ export const NODE_COLORS: Record<string, { bg: string; border: string; text: str
   process:         { bg: '#EFF6FF', border: '#3B82F6', text: '#1E40AF', label: 'Process'        },
   data_store:      { bg: '#F0FDF4', border: '#22C55E', text: '#166534', label: 'Data Store'     },
   external_entity: { bg: '#F9FAFB', border: '#6B7280', text: '#374151', label: 'External Entity' },
+  internet:        { bg: '#EFF6FF', border: '#0078D4', text: '#0050a0', label: 'Internet'       },
   service:         { bg: '#FAF5FF', border: '#A855F7', text: '#6B21A8', label: 'Service'        },
+  identity:        { bg: '#FFF7ED', border: '#F59E0B', text: '#92400E', label: 'Identity'       },
   trust_boundary:  { bg: 'rgba(251,146,60,0.05)', border: '#FB923C', text: '#9A3412', label: 'Trust Boundary' },
 };
 

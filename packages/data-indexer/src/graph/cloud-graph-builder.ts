@@ -271,7 +271,7 @@ export class CloudGraphBuilder {
       if (!id) continue;
 
       const base = {
-        id: nodeId(tenantId, id),
+        id: cloudResourceEntityId(tenantId, id),
         tenantId,
         cloudProvider: 'azure' as const,
         providerResourceId: id.toLowerCase(),
@@ -520,7 +520,7 @@ export class CloudGraphBuilder {
       // The target resource ID is an ARM path; we emit the relationship using it as the source ID.
       // If the target node exists in the graph, it will resolve. If not, the edge is still emitted.
       if (pe.targetResourceId) {
-        const targetNodeId = nodeId(tenantId, pe.targetResourceId);
+        const targetNodeId = cloudResourceEntityId(tenantId, pe.targetResourceId);
         rels.push(makeRel(targetNodeId, pe.id, 'HAS_PRIVATE_ENDPOINT', tenantId, 'deterministic'));
         // CONNECTS_TO is the reverse semantic: PE connects to the PaaS resource
         rels.push(makeRel(pe.id, targetNodeId, 'CONNECTS_TO', tenantId, 'deterministic'));
@@ -548,7 +548,7 @@ export class CloudGraphBuilder {
     );
 
     for (const fw of topology.firewallRules) {
-      const resourceNodeId = nodeId(tenantId, fw.id);
+      const resourceNodeId = cloudResourceEntityId(tenantId, fw.id);
 
       // HAS_FIREWALL_RULE (stored in edge metadata, no separate node)
       rels.push({
@@ -618,7 +618,7 @@ export class CloudGraphBuilder {
     for (const sa of identityGraph.systemAssignedIdentities) {
       const mi = miIndex.get(sa.principalId);
       if (!mi) continue;
-      const computeNodeId = nodeId(tenantId, sa.resourceId);
+      const computeNodeId = cloudResourceEntityId(tenantId, sa.resourceId);
       rels.push(makeRel(computeNodeId, mi.id, 'ASSIGNED_IDENTITY', tenantId, 'deterministic'));
     }
 
@@ -628,7 +628,7 @@ export class CloudGraphBuilder {
       const mi = miIndex.get(ra.principalId);
       if (!mi) continue; // Only emit for known managed identities
 
-      const scopeNodeId = nodeId(tenantId, ra.scope);
+      const scopeNodeId = cloudResourceEntityId(tenantId, ra.scope);
       rels.push(makeRel(mi.id, scopeNodeId, 'HAS_ROLE', tenantId, 'deterministic', {
         roleName: ra.roleName,
         roleDefinitionId: ra.roleDefinitionId,
@@ -666,7 +666,7 @@ export class CloudGraphBuilder {
     for (const resource of rawResources) {
       if (!computeTypes.includes((resource.type ?? '').toLowerCase())) continue;
 
-      const computeNodeId = nodeId(tenantId, resource.id);
+      const computeNodeId = cloudResourceEntityId(tenantId, resource.id);
       const subnetId = extractSubnetId(resource);
       if (!subnetId) continue;
 
@@ -735,14 +735,6 @@ export class CloudGraphBuilder {
 // ============================================================================
 // Utility helpers
 // ============================================================================
-
-function nodeId(tenantId: string, armId: string): string {
-  return crypto
-    .createHash('sha256')
-    .update(`${tenantId}:${armId.toLowerCase()}`)
-    .digest('hex')
-    .substring(0, 16);
-}
 
 /**
  * Generate the cloud_resource entity ID that matches the legacy EntityIdUtils.cloudResourceId()

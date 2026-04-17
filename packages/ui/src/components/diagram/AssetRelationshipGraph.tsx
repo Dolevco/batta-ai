@@ -72,8 +72,10 @@ export interface AssetRelationshipGraphProps {
 
 // ── Node type → DFD nodeType mapping ─────────────────────────────────────────
 
-function mapToDfdNodeType(entityType: string): string {
+function mapToDfdNodeType(entityType: string, label?: string, id?: string): string {
   const t = entityType.toLowerCase();
+  // Internet node — its own visual type so it gets a globe icon + blue border
+  if (t === 'internetnode' || t === 'internet' || id === 'internet' || label?.toLowerCase() === 'internet') return 'internet';
   if (t.includes('data_store') || t.includes('datastore') || t.includes('database')) return 'data_store';
   // Identity nodes get their own group
   if (t === 'azureidentity' || t === 'azure_identity' || t === 'iamroleassignment' || t === 'iam_role_assignment' || t.includes('identity')) return 'identity';
@@ -86,6 +88,7 @@ function mapToDfdNodeType(entityType: string): string {
 // ── Entity category grouping ──────────────────────────────────────────────────
 
 const GROUP_LABELS: Record<string, string> = {
+  internet:        'Internet',
   process:         'Services',
   data_store:      'Data Stores',
   external_entity: 'External',
@@ -95,7 +98,7 @@ const GROUP_LABELS: Record<string, string> = {
 };
 
 function getGroupKey(node: GraphNode): string {
-  return mapToDfdNodeType(node.type);
+  return mapToDfdNodeType(node.type, node.label, node.id);
 }
 
 // ── Edge type → colour ────────────────────────────────────────────────────────
@@ -146,8 +149,8 @@ function assignRanks(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number
 
   // Prefer explicit internet/external nodes as roots; fall back to zero-in-degree
   const roots = nodes.filter((n) => {
-    const dfdType = mapToDfdNodeType(n.type);
-    return dfdType === 'external_entity' || n.id.toLowerCase() === 'internet' || n.label.toLowerCase() === 'internet';
+    const dfdType = mapToDfdNodeType(n.type, n.label, n.id);
+    return dfdType === 'external_entity' || dfdType === 'internet' || n.id.toLowerCase() === 'internet' || n.label.toLowerCase() === 'internet';
   });
   const seedIds = roots.length > 0
     ? roots.map((n) => n.id)
@@ -173,6 +176,7 @@ function assignRanks(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number
 
   // Fallback for disconnected nodes: use GROUP_ORDER position as rank
   const GROUP_RANK: Record<string, number> = {
+    internet:        0,
     external_entity: 0,
     identity:        1,
     process:         2,
@@ -182,7 +186,7 @@ function assignRanks(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number
   };
   for (const n of nodes) {
     if (!rank.has(n.id)) {
-      rank.set(n.id, GROUP_RANK[mapToDfdNodeType(n.type)] ?? 3);
+      rank.set(n.id, GROUP_RANK[mapToDfdNodeType(n.type, n.label, n.id)] ?? 3);
     }
   }
 
@@ -330,7 +334,7 @@ function buildLayout(
 }
 
 function groupTheme(groupKey: string): 'internal' | 'dmz' | 'external' | 'public' {
-  if (groupKey === 'external_entity') return 'external';
+  if (groupKey === 'internet' || groupKey === 'external_entity') return 'external';
   if (groupKey === 'identity') return 'dmz';
   if (groupKey === 'data_store') return 'public';
   if (groupKey === 'trust_boundary') return 'dmz';
@@ -338,8 +342,8 @@ function groupTheme(groupKey: string): 'internal' | 'dmz' | 'external' | 'public
 }
 
 function makeDfdNode(n: GraphNode, x: number, y: number, isFocus: boolean): Node {
-  const dfdType = mapToDfdNodeType(n.type);
-  const iconUrl = getNodeIcon(n.type, n.metadata);
+  const dfdType = mapToDfdNodeType(n.type, n.label, n.id);
+  const iconUrl = getNodeIcon(n.type, { ...n.metadata, id: n.id, _label: n.label });
   return {
     id: n.id,
     type: 'dfdCompact',
@@ -627,8 +631,8 @@ export function AssetRelationshipGraph({ graph, onNodeClick }: AssetRelationship
     const srcNode = graph.nodes.find((n) => n.id === node.id);
     if (!srcNode) return;
 
-    const dfdType = mapToDfdNodeType(srcNode.type);
-    const iconUrl = getNodeIcon(srcNode.type, srcNode.metadata);
+    const dfdType = mapToDfdNodeType(srcNode.type, srcNode.label, srcNode.id);
+    const iconUrl = getNodeIcon(srcNode.type, { ...srcNode.metadata, id: srcNode.id, _label: srcNode.label });
 
     setSelectedNode({
       id: srcNode.id,

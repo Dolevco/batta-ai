@@ -39,6 +39,12 @@ const NODE_TYPE_TO_RESOURCE_TYPE: Record<string, CloudResource['resourceType']> 
   Subnet: 'network',
   NetworkSecurityGroup: 'network',
   PrivateEndpoint: 'network',
+  // Compute / PaaS — these are first-class graph nodes that also appear as
+  // backends for Front Door / Traffic Manager origins.  Use proper resourceType
+  // values so the UI's icon resolution (getIconFromResourceType) works correctly.
+  ContainerApp: 'compute',
+  WebApp: 'compute',
+  StorageAccount: 'storage',
   // Identity (map to 'other' — identity entities use AzureIdentity, not CloudResource,
   // but we still need them to be traversable via the BFS)
   ManagedIdentity: 'other',
@@ -46,6 +52,26 @@ const NODE_TYPE_TO_RESOURCE_TYPE: Record<string, CloudResource['resourceType']> 
   // Synthetic
   InternetNode: 'network',
 };
+
+/**
+ * Derives the ARM provider/resource-type segment from a providerResourceId ARM path.
+ *
+ * E.g. "/subscriptions/.../providers/microsoft.app/containerapps/batta-api"
+ *   → "microsoft.app/containerapps"
+ *
+ * Returns empty string if the path cannot be parsed (safe — callers treat '' as
+ * "no type override").
+ *
+ * Security: the input is always a pre-validated ARM path from the Azure Management API;
+ * this is a pure string parse — no I/O, no side effects.
+ */
+function armTypeFromResourceId(providerResourceId: string): string {
+  if (!providerResourceId) return '';
+  // ARM IDs are case-insensitive; normalise to lower-case for consistent matching.
+  const lower = providerResourceId.toLowerCase();
+  const match = lower.match(/\/providers\/([^/]+\/[^/]+)/);
+  return match ? match[1] : '';
+}
 
 /**
  * Converts a single AnyGraphNode to a CloudResource CanonicalEntity.
@@ -56,7 +82,12 @@ const NODE_TYPE_TO_RESOURCE_TYPE: Record<string, CloudResource['resourceType']> 
  *  - Sets `entityType: 'cloud_resource'` so existing API and query code handles
  *    it without modification.
  *  - Stores all node-specific properties in `metadata` for display/query use.
+ *  - Stores the ARM provider/resource-type in `metadata.type` so the UI's
+ *    `getIconFromResourceType` helper can resolve the correct icon (e.g. the
+ *    Container Apps icon for ContainerApp nodes).
  *  - Applies tenantId isolation — same value used in Neo4j.
+ *
+ * Data classification: CONFIDENTIAL (infrastructure topology); tenantId-isolated.
  */
 export function graphNodeToCloudResource(node: AnyGraphNode): CloudResource {
   const now = node.indexedAt ?? new Date().toISOString();
@@ -65,6 +96,13 @@ export function graphNodeToCloudResource(node: AnyGraphNode): CloudResource {
   // Build metadata without any secret-adjacent fields; tags are already
   // sanitized upstream by the node-sanitizer in CloudGraphBuilder.
   const { id, tenantId, nodeType, displayName, region, tags, indexedAt, providerResourceId, cloudProvider, dataClassification, internetExposed, ...specificProps } = node as any;
+
+  // Derive the ARM resource type from the providerResourceId so the UI icon
+  // logic (`getIconFromResourceType`) can resolve the correct icon.
+  // For synthetic/network-only nodes the ARM type may be empty — that is fine;
+  // those nodes already have a concrete resourceType ('network') that the icon
+  // logic falls back to.
+  const armType = armTypeFromResourceId(providerResourceId);
 
   return {
     id,
@@ -86,6 +124,10 @@ export function graphNodeToCloudResource(node: AnyGraphNode): CloudResource {
       dataClassification,
       internetExposed,
       tags,
+      // Include the ARM provider/resource-type string (e.g. "microsoft.app/containerapps")
+      // so the UI's getIconFromResourceType() helper can resolve the correct Azure icon
+      // without needing to re-parse the resourceId on the client side.
+      ...(armType && { type: armType }),
       ...specificProps,
     },
   };
@@ -97,6 +139,7 @@ export function graphNodeToCloudResource(node: AnyGraphNode): CloudResource {
  * is not a real asset — it is only used to anchor internet-exposure BFS).
  *
  * Audit: logs node count at INFO level; no raw node data is logged.
+ * Data classification: CONFIDENTIAL — topology count only logged, no topology detail.
  */
 export function cloudGraphToQdrantEntities(graph: CloudGraph): CloudResource[] {
   const entities = graph.nodes

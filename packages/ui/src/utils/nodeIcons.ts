@@ -23,18 +23,29 @@ export type GraphNodeType =
  * Returns a path to an SVG icon that visually represents the entity type
  */
 export function getNodeIcon(nodeType: GraphNodeType | string, metadata?: Record<string, any>): string {
+  // Internet node — always use the globe icon
+  if (
+    nodeType === 'InternetNode' ||
+    nodeType === 'internet' ||
+    metadata?.id === 'internet' ||
+    metadata?._label?.toLowerCase() === 'internet' ||
+    (typeof nodeType === 'string' && nodeType.toLowerCase() === 'internet')
+  ) {
+    return '/images/Icons/internet.svg';
+  }
+
   // For Vulnerability nodes, infer icon from package manager
   if (nodeType === 'Vulnerability' && metadata) {
     const vulnIcon = getVulnerabilityIcon(metadata);
     if (vulnIcon) return vulnIcon;
   }
-  
+
   // For CloudResource nodes, infer specific resource type from metadata
   if (nodeType === 'CloudResource' && metadata) {
     const specificIcon = getCloudResourceIcon(metadata);
     if (specificIcon) return specificIcon;
   }
-  
+
   // For AzureIdentity nodes, infer specific identity type from metadata
   if (nodeType === 'AzureIdentity' && metadata) {
     const identityIcon = getAzureIdentityIcon(metadata);
@@ -114,7 +125,21 @@ function getAzureIdentityIcon(metadata: Record<string, any>): string | null {
  */
 function getIconFromResourceType(resourceType: string): string | null {
   const lowerType = resourceType.toLowerCase();
-  
+
+  // Azure Front Door & CDN Profiles (microsoft.network/frontdoors, microsoft.cdn/profiles, microsoft.network/frontdoorwebapplicationfirewallpolicies)
+  if (
+    lowerType.includes('frontdoor') ||
+    lowerType.includes('front-door') ||
+    lowerType.includes('cdn/profiles') ||
+    lowerType.includes('afdorigingroups') ||
+    lowerType.includes('afdendpoints')
+  ) {
+    return '/images/Icons/Azure/10094-icon-service-Front-Door-And-CDN-Profiles.svg';
+  }
+  // Container Apps (microsoft.app/containerapps, microsoft.app/managedenvironments, microsoft.app/jobs)
+  if (lowerType.includes('microsoft.app/') || lowerType.includes('containerapps')) {
+    return '/images/Icons/Azure/10336-icon-service-Container-Apps.svg';
+  }
   // Virtual Machines
   if (lowerType.includes('virtualmachines') || lowerType.includes('compute/vm')) {
     return '/images/Icons/Azure/10021-icon-service-Virtual-Machine.svg';
@@ -160,7 +185,7 @@ function getIconFromResourceType(resourceType: string): string | null {
   if (lowerType.includes('vaults') || lowerType.includes('keyvault')) {
     return '/images/Icons/Azure/10245-icon-service-Key-Vaults.svg';
   }
-  
+
   return null;
 }
 
@@ -205,10 +230,17 @@ function getCloudResourceIcon(metadata: Record<string, any>): string | null {
   
   // Parse Azure resource IDs (format: /subscriptions/{sub}/resourceGroups/{rg}/providers/{provider}/{type}/{name})
   if (resourceId.includes('/providers/')) {
-    const match = resourceId.match(/\/providers\/[^\/]+\/([^\/]+)/i);
+    // Capture provider + resource type (e.g. "microsoft.network/frontdoors")
+    const match = resourceId.match(/\/providers\/([^\/]+\/[^\/]+)/i);
     if (match) {
-      const azureType = match[1].toLowerCase();
-      
+      const azureFullType = match[1].toLowerCase(); // e.g. "microsoft.network/frontdoors"
+      // Re-use the resource-type function so we stay DRY
+      const iconFromFullType = getIconFromResourceType(azureFullType);
+      if (iconFromFullType) return iconFromFullType;
+
+      // Fallback: check just the resource sub-type (last segment)
+      const azureType = azureFullType.split('/').pop() ?? '';
+
       // Virtual Machines
       if (azureType.includes('virtualmachines')) {
         return '/images/Icons/Azure/10021-icon-service-Virtual-Machine.svg';
@@ -292,6 +324,12 @@ function getCloudResourceIcon(metadata: Record<string, any>): string | null {
   
   // Check resourceType field for generic patterns
   const lowerType = resourceType.toLowerCase();
+  if (lowerType.includes('frontdoor') || lowerType.includes('front-door') || lowerType.includes('cdn')) {
+    return '/images/Icons/Azure/10094-icon-service-Front-Door-And-CDN-Profiles.svg';
+  }
+  if (lowerType.includes('containerapp')) {
+    return '/images/Icons/Azure/10336-icon-service-Container-Apps.svg';
+  }
   if (lowerType.includes('vm') || lowerType.includes('virtualmachine')) {
     return '/images/Icons/Azure/10021-icon-service-Virtual-Machine.svg';
   }
