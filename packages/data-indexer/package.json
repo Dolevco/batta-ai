@@ -1,0 +1,73 @@
+{
+  "name": "@batta/data-indexer",
+  "version": "0.1.0",
+  "description": "Agent-native data indexing layer for cybersecurity platform",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline/index.d.ts",
+      "default": "./dist/pipeline/index.js"
+    },
+    "./analysis": {
+      "types": "./dist/analysis/index.d.ts",
+      "default": "./dist/analysis/index.js"
+    },
+    "./cloud": {
+      "types": "./dist/cloud/index.d.ts",
+      "default": "./dist/cloud/index.js"
+    },
+    "./integrations": {
+      "types": "./dist/integrations/index.d.ts",
+      "default": "./dist/integrations/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "ARCHITECTURE.md",
+    "OSS_READY_PLAN.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsc --watch",
+    "lint": "eslint src/",
+    "test": "pnpm run typecheck",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "prepack": "pnpm run clean && pnpm run build",
+    "pack:dry-run": "npm pack --dry-run --cache /tmp/batta-ai-npm-cache"
+  },
+  "dependencies": {
+    "@batta/core": "workspace:*",
+    "@batta/shared": "workspace:*",
+    "@aws-sdk/client-config-service": "^3",
+    "@aws-sdk/client-cloudfront": "^3",
+    "@aws-sdk/client-ec2": "^3",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3",
+    "@aws-sdk/client-api-gateway": "^3",
+    "@aws-sdk/client-apigatewayv2": "^3",
+    "@aws-sdk/client-wafv2": "^3",
+    "@aws-sdk/client-iam": "^3",
+    "@aws-sdk/client-ecs": "^3",
+    "@aws-sdk/client-lambda": "^3",
+    "@aws-sdk/credential-providers": "^3",
+    "@aws-sdk/types": "^3",
+    "glob": "^10.3.10",
+    "p-limit": "^7.3.0",
+    "simple-git": "^3.22.0",
+    "yaml": "^2.3.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  }
+}

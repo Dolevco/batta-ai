@@ -1,0 +1,53 @@
+# Security Reviews — batta MCP
+
+This repository uses [batta](https://github.com/batta-ai/batta-ai) for structured security
+reviews. The batta MCP server is configured in `.claude/mcp.json`.
+
+**Do not call the HTTP endpoint directly. Use the MCP tools through your agent.**
+
+## Before implementing any feature
+
+1. Check whether this repository has been indexed:
+
+   ```
+   get_indexing_status
+   ```
+
+   If `status` is not `"completed"` or coverage is 0, run `/batta-index` first and
+   finish the indexing workflow before feature work when possible.
+
+2. Start a security review before writing any implementation code for every new feature,
+   behavior change, endpoint, data flow, integration, auth change, storage change,
+   infrastructure change, or dependency change:
+
+   ```
+   /batta-review <one-sentence description of the change>
+   ```
+
+   or without the slash command:
+
+   > Start a batta security review for: \<description\>
+
+   The full protocol is injected automatically. Do not skip any step.
+
+## Task severity guide
+
+| Severity | Required action |
+| --- | --- |
+| critical | Must address before merging |
+| high | Must address; document explicitly if deferred |
+| medium | Should address; defer with written justification |
+| low | Best effort |
+
+## Architecture baseline note
+
+After `submit_security_answers`, study `featureSecurityContext` carefully — it contains
+the existing DFDs, threat models, and data classifications that are the baseline for your
+change. When calling `submit_security_attestations`, `architectureUpdates` must include the
+**complete** state of each entry after your change, not just the delta.
+
+## Attestation evidence rules
+
+Every submitted attestation must reference concrete evidence such as files, symbols,
+routes, tests, migrations, config keys, or documentation. Do not include secrets, tokens,
+private keys, `.env` values, or raw source blobs.

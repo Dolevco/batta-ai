@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+  <defs>
+    <linearGradient id="ca-a" x1="1" y1="1" x2="17" y2="17" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#50e6ff"/>
+      <stop offset="1" stop-color="#0078d4"/>
+    </linearGradient>
+  </defs>
+  <title>Azure Container Apps</title>
+  <!-- Outer rounded container -->
+  <rect x="1.5" y="2.5" width="15" height="13" rx="2.5" ry="2.5" fill="url(#ca-a)"/>
+  <!-- Three mini containers inside, arranged like microservices -->
+  <rect x="3" y="4.5" width="5" height="4" rx="1" fill="#fff" opacity="0.9"/>
+  <rect x="10" y="4.5" width="5" height="4" rx="1" fill="#fff" opacity="0.9"/>
+  <rect x="3" y="10" width="5" height="4" rx="1" fill="#fff" opacity="0.9"/>
+  <rect x="10" y="10" width="5" height="4" rx="1" fill="#fff" opacity="0.5"/>
+</svg>

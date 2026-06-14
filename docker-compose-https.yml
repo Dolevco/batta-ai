@@ -1,0 +1,71 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - ai-agent-network
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=batta
+      - POSTGRES_PASSWORD=batta_password
+      - POSTGRES_DB=batta_ai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai-agent-network
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - packages/api/.env
+    environment:
+      - PORT=3001
+      - DATABASE_URL=postgresql://batta:batta_password@postgres:5432/batta_ai
+      - REDIS_URL=redis://redis:6379
+      - HTTPS=true
+      - SSL_KEY_PATH=/app/ssl/key.pem
+      - SSL_CERT_PATH=/app/ssl/cert.pem
+    volumes:
+      - ./ssl:/app/ssl:ro
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-agent-network
+
+  ui:
+    build:
+      context: .
+      dockerfile: deploy/ui/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:443"
+    environment:
+      - HTTPS=true
+    volumes:
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+    networks:
+      - ai-agent-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  ai-agent-network:
+    driver: bridge

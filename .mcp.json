@@ -1,0 +1,8 @@
+{
+    "mcpServers": {
+    "security-review": {
+      "type": "http",
+      "url": "http://localhost:3101/api/mcp?repo=batta-ai"
+    }
+  }
+}

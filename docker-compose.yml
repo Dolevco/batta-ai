@@ -1,0 +1,68 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - ai-agent-network
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-app}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=${POSTGRES_DB:-app}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai-agent-network
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3101:3101"
+    env_file:
+      - packages/api/.env
+    environment:
+      - PORT=3101
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-app}
+      - REDIS_URL=redis://redis:6379
+      - HTTPS=false
+      - AUTH_DISABLED=true
+      - TENANT_ID=local
+      - EMBEDDINGS_ENABLED=false
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-agent-network
+
+  ui:
+    build:
+      context: .
+      dockerfile: deploy/ui/Dockerfile
+      args:
+        - VITE_AUTH_DISABLED=true
+    restart: unless-stopped
+    ports:
+      - "3100:80"
+    depends_on:
+      - api
+    networks:
+      - ai-agent-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  ai-agent-network:
+    driver: bridge

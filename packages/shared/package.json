@@ -1,0 +1,66 @@
+{
+  "name": "@batta/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./persistence": {
+      "types": "./dist/persistence/index.d.ts",
+      "default": "./dist/persistence/index.js"
+    },
+    "./services": {
+      "types": "./dist/services/index.d.ts",
+      "default": "./dist/services/index.js"
+    },
+    "./integrations": {
+      "types": "./dist/integrations/index.d.ts",
+      "default": "./dist/integrations/index.js"
+    },
+    "./events": {
+      "types": "./dist/events/index.d.ts",
+      "default": "./dist/events/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/types/index.js"
+    },
+    "./legacy": {
+      "types": "./dist/legacy.d.ts",
+      "default": "./dist/legacy.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && copyfiles -u 1 \"src/persistence/migrations/*.sql\" dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  },
+  "dependencies": {
+    "@batta/core": "workspace:*",
+    "@aws-sdk/client-securityhub": "^3",
+    "@aws-sdk/client-guardduty": "^3",
+    "@aws-sdk/client-config-service": "^3",
+    "@aws-sdk/client-accessanalyzer": "^3",
+    "@aws-sdk/client-sts": "^3",
+    "@aws-sdk/credential-providers": "^3",
+    "@aws-sdk/types": "^3",
+    "@octokit/auth-app": "^6.0.0",
+    "@octokit/rest": "^20.0.2",
+    "@slack/web-api": "^6.9.0",
+    "axios": "^1.13.2",
+    "pg": "^8.11.0",
+    "redis": "^4.6.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "@types/uuid": "^9.0.0",
+    "copyfiles": "^2.4.1"
+  }
+}
