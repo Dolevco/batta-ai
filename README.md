@@ -1,5 +1,7 @@
 # batta-ai
 
+[![Website](https://img.shields.io/badge/website-batta.ai-blue)](https://batta.ai)
+
 > Secure agent work, by design.
 
 Batta gives agents the right security and compliance context — so every decision is
